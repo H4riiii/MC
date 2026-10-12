@@ -16,9 +16,9 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // ---------------- PINS ----------------
-#define BUTTON_1 PA0
-#define BUTTON_2 PA1
-#define BUTTON_3 PA2
+#define BUTTON_1 PB12
+#define BUTTON_2 PB14
+#define BUTTON_3 PB15
 #define LED_1    PB1
 #define LED_2    PB10
 #define BUZZER   PB0

@@ -25,9 +25,9 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // ---------------- PIN ASSIGNMENTS ----------------
-#define BUTTON_1 PA0   // Pushbutton 1: Pill 1 Dose confirm / Menu +
-#define BUTTON_2 PA1   // Pushbutton 2: Pill 2 Dose confirm / Menu select
-#define BUTTON_3 PA2   // Pushbutton 3: Open Setup Menu
+#define BUTTON_1 PB12  // Pushbutton 1: Pill 1 Dose confirm / Menu +
+#define BUTTON_2 PB14  // Pushbutton 2: Pill 2 Dose confirm / Menu select
+#define BUTTON_3 PB15  // Pushbutton 3: Open Setup Menu
 
 #if ENABLE_LEDS
 #define LED_1    PB1   // Pill 1 LED (Red)

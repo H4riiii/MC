@@ -16,9 +16,9 @@ This directory contains the firmware configured for the **minimal hardware setup
 | **OLED GND** | **GND** | GND | Common ground |
 | **OLED SCL** | **PB6** | SCL | I2C1 Clock (Hardware I2C) |
 | **OLED SDA** | **PB7** | SDA | I2C1 Data (Hardware I2C) |
-| **Button 1** (Pill 1) | **PA0** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
-| **Button 2** (Pill 2) | **PA1** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
-| **Button 3** (Setup) | **PA2** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
+| **Button 1** (Pill 1) | **PB12** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
+| **Button 2** (Pill 2) | **PB14** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
+| **Button 3** (Setup) | **PB15** | Pin 1 | Pin 2 to **GND** (Internal `INPUT_PULLUP`) |
 
 > [!NOTE]
 > All pushbuttons use internal pull-up resistors (`INPUT_PULLUP`). Connect one side of each switch to the designated STM32 pin and the other side directly to **GND**. When pressed, the pin reads `LOW`. No external resistors required for the buttons.
@@ -78,10 +78,10 @@ You can flash this firmware using either **PlatformIO** or **Arduino IDE**.
 2. **First Alarm Test**: Default dose for Pill 1 is set to `07:30:00`. Two minutes after powering on, the reminder will automatically trigger.
 3. **Visual OLED Reminder**:
    - The screen alternates with a flashing high-contrast banner: `*** MEDICINE! TAKE: PILL 1 ***`.
-   - Press **Button 1** (`PA0`) to confirm taking Pill 1. The screen displays `DOSE TAKEN` and returns to idle.
-   - If **Button 2** (`PA1`) is pressed accidentally, the screen displays a blinking inverted warning: `WRONG PILL! Press BUTTON 1`.
+   - Press **Button 1** (`PB12`) to confirm taking Pill 1. The screen displays `DOSE TAKEN` and returns to idle.
+   - If **Button 2** (`PB14`) is pressed accidentally, the screen displays a blinking inverted warning: `WRONG PILL! Press BUTTON 1`.
 4. **Setup Menu**:
-   - Press **Button 3** (`PA2`) in idle mode to enter the dose schedule editor.
+   - Press **Button 3** (`PB15`) in idle mode to enter the dose schedule editor.
    - **Button 1**: Change hour/minute values or toggle pills.
    - **Button 2**: Advance to next field or save changes.
 
@@ -136,5 +136,17 @@ smart_pillbox/
 ├── INSTRUCTIONS.md      # This guide
 ├── smart_pillbox.ino    # Arduino IDE sketch file
 └── src/
-    └── main.cpp         # PlatformIO C++ source file
+    ├── main.c           # Pure STM32 HAL C firmware (STM32CubeIDE / Keil)
+    └── main.cpp         # Arduino framework C++ firmware (PlatformIO)
 ```
+
+---
+
+## 6. Using the Pure C Firmware (`main.c`)
+
+For users flashing with **STM32CubeIDE**, **Keil MDK**, or a native **STM32 HAL C** setup:
+- The firmware is in [smart_pillbox/src/main.c](file:///Users/harinarayanans/MC/smart_pillbox/src/main.c) (also copied to [main.c](file:///Users/harinarayanans/MC/main.c)).
+- **Zero external library dependencies**: Includes a complete, pure C SSD1306 128x64 OLED driver and embedded 5x7 ASCII font table.
+- **Hardware abstraction**: Built using standard STM32 HAL (`I2C1` PB6/PB7, `GPIOB` PB12/PB14/PB15 inputs with `GPIO_PULLUP`).
+- You can copy [main.c](file:///Users/harinarayanans/MC/smart_pillbox/src/main.c) directly into any STM32F103C8 CubeMX/STM32CubeIDE project's `Core/Src/main.c`.
+
