@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "author": "Antigravity",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-stm32-bluepill", "id": "stm32", "top": -116.56, "left": -243.63, "attrs": {} },
+    { "type": "board-ssd1306", "id": "oled1", "top": 108.74, "left": -412.57, "attrs": { "i2cAddress": "0x3c" } },
+    { "type": "wokwi-pushbutton", "id": "btn1", "top": -192.1, "left": -169.3, "rotate": 90, "attrs": { "color": "green", "xray": "1" } },
+    { "type": "wokwi-pushbutton", "id": "btn2", "top": -192.1, "left": -102.1, "rotate": 90, "attrs": { "color": "green", "xray": "1" } },
+    { "type": "wokwi-pushbutton", "id": "btn3", "top": -192.1, "left": -34.9, "rotate": 90, "attrs": { "color": "blue", "xray": "1" } }
+  ],
+  "connections": [
+    [ "btn1:2.r", "stm32:GND.2", "green", [] ],
+    [ "btn1:1.l", "stm32:A0", "green", [] ],
+    [ "btn2:2.r", "stm32:GND.3", "green", [] ],
+    [ "btn2:1.l", "stm32:A1", "green", [] ],
+    [ "btn3:2.r", "stm32:GND.3", "green", [] ],
+    [ "btn3:1.l", "stm32:A2", "blue", [] ],
+    [ "oled1:GND", "stm32:GND.1", "black", [] ],
+    [ "oled1:VCC", "stm32:3V3.1", "red", [] ],
+    [ "oled1:SCL", "stm32:B6", "green", [] ],
+    [ "oled1:SDA", "stm32:B7", "green", [] ]
+  ],
+  "dependencies": {}
+}
