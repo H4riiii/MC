@@ -271,16 +271,19 @@ static void ssd1306_WriteCommand(uint8_t cmd) {
     HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x00, 1, &cmd, 1, 100);
 }
 
+void ssd1306_Clear(uint8_t color);
+void ssd1306_UpdateScreen(void);
+
 void ssd1306_Init(void) {
     HAL_Delay(100);
-    ssd1306_WriteCommand(0xAE); // Display OFF
+    ssd1306_WriteCommand(0xAE); // Display OFF (remain off during init to hide uninitialized GDDRAM)
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
     ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode
     ssd1306_WriteCommand(0xB0); // Page start address 0
     ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
-    ssd1306_WriteCommand(0x00); // Low column address
-    ssd1306_WriteCommand(0x10); // High column address
-    ssd1306_WriteCommand(0x40); // Start line address
+    ssd1306_WriteCommand(0x00); // Low column address 0
+    ssd1306_WriteCommand(0x10); // High column address 0
+    ssd1306_WriteCommand(0x40); // Start line address 0
     ssd1306_WriteCommand(0x81); // Set contrast control
     ssd1306_WriteCommand(0x7F);
     ssd1306_WriteCommand(0xA1); // Set segment re-map (A0/A1)
@@ -299,8 +302,15 @@ void ssd1306_Init(void) {
     ssd1306_WriteCommand(0xDB); // Vcomh
     ssd1306_WriteCommand(0x40);
     ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump
+    ssd1306_WriteCommand(0x14); // Enable charge pump (~7.5V OLED booster)
+
+    // Clear STM32 buffer and flush 1024 zero bytes to OLED GDDRAM *before* turning display ON
+    // This permanently clears power-on static noise!
+    ssd1306_Clear(0);
+    ssd1306_UpdateScreen();
+
     ssd1306_WriteCommand(0xAF); // Display ON
+    HAL_Delay(20);
 }
 
 void ssd1306_Clear(uint8_t color) {
@@ -308,10 +318,19 @@ void ssd1306_Clear(uint8_t color) {
 }
 
 void ssd1306_UpdateScreen(void) {
+    // In Horizontal Addressing Mode (0x00):
+    // Set column range from 0 to 127
+    ssd1306_WriteCommand(0x21);
+    ssd1306_WriteCommand(0x00);
+    ssd1306_WriteCommand(127);
+
+    // Set page range from 0 to 7 (8 pages = 64 lines)
+    ssd1306_WriteCommand(0x22);
+    ssd1306_WriteCommand(0x00);
+    ssd1306_WriteCommand(0x07);
+
+    // Send 1024 bytes in clean 128-byte pages
     for (uint8_t page = 0; page < 8; page++) {
-        ssd1306_WriteCommand(0xB0 + page);
-        ssd1306_WriteCommand(0x00);
-        ssd1306_WriteCommand(0x10);
         HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100);
     }
 }
