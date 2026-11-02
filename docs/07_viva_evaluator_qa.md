@@ -77,3 +77,33 @@ This guide compiles essential oral examination and evaluation questions for the 
 >    * Button 2 advances to the next field and opens the Save Confirmation screen.
 > 5. When confirmed, `DS1307_SetTime()` writes the new time directly to the RTC over I2C.
 
+---
+
+## 5. Storage (MicroSD Card) & Diagnostic Architecture
+
+### Q11: How does the MicroSD Card communicate with the STM32, and on what pins?
+> **Answer:**
+> The MicroSD module communicates via **hardware SPI1** on Port A pins:
+> * **`PA4`**: Chip Select (`CS` - Active LOW GPIO Output)
+> * **`PA5`**: Clock (`SCK` - SPI1 Alternate Function)
+> * **`PA6`**: Master In Slave Out (`MISO` - SPI1 Input with Pull-Up)
+> * **`PA7`**: Master Out Slave In (`MOSI` - SPI1 Alternate Function)
+> This cleanly preserves Port B for the I2C bus (`PB6`/`PB7`), push buttons (`PB12`, `PB14`, `PB15`), and indicator outputs (`PB0`, `PB1`, `PB10`).
+
+### Q12: What exact files are stored on the SD Card and why?
+> **Answer:**
+> 1. **`CONFIG.TXT`**: Holds non-volatile configurations for `dose1` and `dose2` hours and minutes. Loaded at startup to restore schedules after power cycling, and overwritten whenever schedules are modified in the setup menu.
+> 2. **`LOGS.CSV`**: An audit trail recording every medication event (`DOSE_1_TAKEN`, `DOSE_2_TAKEN`, `WRONG_BUTTON`, `CLOCK_ADJUST`, `CONFIG_UPDATE`) formatted with RTC timestamps. It can be opened directly on a PC in Microsoft Excel.
+
+### Q13: What happens if the SD card or RTC is physically unplugged or absent?
+> **Answer:**
+> The firmware uses **non-blocking graceful degradation**:
+> * If the SD card is missing, `SD_Init()` fails and sets `sdAvailable = false`. The firmware defaults to internal RAM schedules and does not crash or block.
+> * If the DS1307 RTC is missing or unpowered, the system falls back to `HAL_GetTick()` elapsed time accumulation, displaying an alert symbol (`!`) while keeping alarms, timers, and buttons fully responsive.
+> * During power-on, a diagnostic screen runs an I2C scan (`0x01`–`0x7F`) and reports both `RTC: OK/NONE` and `SD: OK/NONE`.
+
+### Q14: Can the DS1307 RTC be powered with 3.3V, and why?
+> **Answer:**
+> No. The DS1307 datasheet specifies an operating voltage of $4.5\text{ V} \text{ to } 5.5\text{ V}$. Its internal power-fail threshold disables the I2C interface when $V_{CC} < 1.25 \times V_{BAT}$ ($\approx 3.75\text{ V}$), forcing battery-backup mode. Therefore, $V_{CC}$ is connected to the Blue Pill's $5\text{ V}$ pin. The STM32's `PB6` and `PB7` pins are 5V-tolerant (FT) and communicate safely with the bus.
+
+

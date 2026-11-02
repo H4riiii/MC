@@ -8,7 +8,8 @@ The Smart Pill Box is an embedded healthcare assistance device built on the **ST
 2. Ensure patient adherence through audio-visual reminders (SSD1306 OLED, LEDs, Piezo buzzer).
 3. Prevent dangerous medication errors using an active verification system ("Wrong Pill" alert mechanism).
 4. Allow complete offline configuration through a simple 3-button human-machine interface (HMI).
-5. Maintain long-term real time using a battery-backed DS1307 Real-Time Clock module over I2C.
+5. Maintain long-term real time using a battery-backed DS1307 Real-Time Clock module over I2C with seamless software tick fallback.
+6. Provide intake event audit logging (`LOGS.CSV`) and schedule configuration persistence (`CONFIG.TXT`) via a **MicroSD Card Module over SPI1**.
 
 ---
 
@@ -18,6 +19,7 @@ The Smart Pill Box is an embedded healthcare assistance device built on the **ST
 graph TD
     subgraph Controller [STM32F103C8T6 Blue Pill]
         I2C1[I2C1 Peripheral: PB6 SCL, PB7 SDA]
+        SPI1[SPI1 Peripheral: PA4 CS, PA5 SCK, PA6 MISO, PA7 MOSI]
         GPIO_IN[Push Buttons: PB12, PB14, PB15]
         GPIO_OUT[Indicators: PB1 LED1, PB10 LED2, PB0 Buzzer]
         SYS_TICK[HAL SysTick / Timer: 1ms]
@@ -26,6 +28,10 @@ graph TD
     subgraph I2C_Bus [Shared I2C Bus - 100 kHz]
         OLED[SSD1306 128x64 OLED Display - Addr: 0x3C / 0x78]
         RTC[DS1307 Real-Time Clock Module - Addr: 0x68 / 0xD0]
+    end
+
+    subgraph SPI_Storage [SPI Storage Bus - 9 MHz]
+        SD[MicroSD Card Module: CONFIG.TXT & LOGS.CSV]
     end
 
     subgraph Inputs [User Input Controls]
@@ -42,15 +48,17 @@ graph TD
 
     subgraph Power [Power Distribution]
         P3V3[3.3V Rail: STM32, OLED]
-        P5V[5V Rail: DS1307 VCC]
+        P5V[5V Rail: DS1307 VCC, MicroSD VCC]
         BATT[CR2032 3V Coin Cell: DS1307 Backup]
     end
 
     I2C1 <==> I2C_Bus
+    SPI1 <==> SPI_Storage
     GPIO_IN <== Inputs
     GPIO_OUT ==> Outputs
     Power -.-> Controller
     Power -.-> I2C_Bus
+    Power -.-> SPI_Storage
 ```
 
 ---
@@ -61,6 +69,10 @@ graph TD
 | :--- | :--- | :--- | :--- | :--- |
 | **I2C1** | SCL | `PB6` | AF Open-Drain + External Pullup | Clock line for OLED & DS1307 |
 | **I2C1** | SDA | `PB7` | AF Open-Drain + External Pullup | Data line for OLED & DS1307 |
+| **SPI1** | CS | `PA4` | GPIO Push-Pull Output | SD Card Chip Select |
+| **SPI1** | SCK | `PA5` | Alternate Function Push-Pull | SPI Clock (up to 9 MHz) |
+| **SPI1** | MISO | `PA6` | GPIO Input (Internal Pull-Up) | Serial data from SD to MCU |
+| **SPI1** | MOSI | `PA7` | Alternate Function Push-Pull | Serial data from MCU to SD |
 | **Button 1** | Input | `PB12` | GPIO Input (Internal Pull-Up) | Pill 1 OK / Value Increment (+) |
 | **Button 2** | Input | `PB14` | GPIO Input (Internal Pull-Up) | Pill 2 OK / Menu Item Select / Next |
 | **Button 3** | Input | `PB15` | GPIO Input (Internal Pull-Up) | Setup Menu Open / Exit |
