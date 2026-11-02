@@ -2,7 +2,7 @@
 
 Target: **STM32F103C8T6 (Blue Pill)**  
 Peripherals: **SSD1306 (128x64 OLED) & DS1307 RTC on shared I2C1 (PB6/PB7)**  
-Status: **Ready for Implementation (Fix 1 + Fix 2)**
+Status: **IMPLEMENTED ✅**
 
 ---
 
@@ -46,11 +46,11 @@ In contrast, the isolated test code in `test/main_oled_test.c` ran at high frame
 ## 4. Implementation Task List
 
 1. **`Core/Src/ds1307.c`**:
-   - [ ] Change timeout parameters in `DS1307_Init()`, `DS1307_GetTime()`, `DS1307_SetTime()` to `10`.
+   - [x] Change timeout parameters in `DS1307_Init()`, `DS1307_GetTime()`, `DS1307_SetTime()` to `10`.
 2. **`Core/Src/main.c`**:
-   - [ ] Add `static uint8_t lastDisplayedSecond = 0xFF;`.
-   - [ ] In the 500 ms RTC timer block, only trigger `updateScreen = true` if `currentState == NORMAL_IDLE` AND `currentRtc.seconds != lastDisplayedSecond`.
-   - [ ] Update `lastDisplayedSecond = currentRtc.seconds`.
+   - [x] Add `static uint8_t lastDisplayedSecond = 0xFF;`.
+   - [x] In the 500 ms RTC timer block, only trigger `updateScreen = true` if `currentState == NORMAL_IDLE` AND `currentRtc.seconds != lastDisplayedSecond`.
+   - [x] Update `lastDisplayedSecond = currentRtc.seconds`.
 3. **Verification**:
    - [ ] Verify zero flicker on idle clock.
    - [ ] Verify zero menu lag when scrolling through settings.
