@@ -276,14 +276,14 @@ void ssd1306_UpdateScreen(void);
 
 void ssd1306_Init(void) {
     HAL_Delay(100);
-    ssd1306_WriteCommand(0xAE); // Display OFF
+    ssd1306_WriteCommand(0xAE); // Display OFF (blank during init to prevent static noise)
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
-    ssd1306_WriteCommand(0x02); // 02b: Page Addressing Mode (matches 0xB0+page per-page updates)
+    ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode (automatic column wrap)
     ssd1306_WriteCommand(0xB0); // Page start address 0
     ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
-    ssd1306_WriteCommand(0x00); // Low column address
-    ssd1306_WriteCommand(0x10); // High column address
-    ssd1306_WriteCommand(0x40); // Start line address
+    ssd1306_WriteCommand(0x00); // Low column address 0
+    ssd1306_WriteCommand(0x10); // High column address 0
+    ssd1306_WriteCommand(0x40); // Start line address 0
     ssd1306_WriteCommand(0x81); // Set contrast control
     ssd1306_WriteCommand(0x7F);
     ssd1306_WriteCommand(0xA1); // Set segment re-map (A0/A1)
@@ -302,13 +302,15 @@ void ssd1306_Init(void) {
     ssd1306_WriteCommand(0xDB); // Vcomh
     ssd1306_WriteCommand(0x40);
     ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump
-    ssd1306_WriteCommand(0xAF); // Display ON
+    ssd1306_WriteCommand(0x14); // Enable charge pump (crucial to generate ~7.5V OLED panel voltage!)
 
-    // Allow DC-DC charge pump ~50ms to stabilize boost voltage before screen updates
-    HAL_Delay(50);
+    // Clear RAM buffer and flush zeros to OLED GDDRAM *before* turning display ON
+    // This permanently eliminates power-on static noise!
     ssd1306_Clear(0);
     ssd1306_UpdateScreen();
+
+    ssd1306_WriteCommand(0xAF); // Display ON
+    HAL_Delay(50);
 }
 
 void ssd1306_Clear(uint8_t color) {
@@ -627,47 +629,6 @@ static void stopAlarmIndicators(void) {
 #endif
 }
 
-/**
- * @brief I2C Bus Recovery Routine
- * Bit-bangs 9 clock pulses on PB6 (SCL) to un-stick any slave holding SDA LOW,
- * generates a STOP condition, and reverts pins back to Alternate Function Open Drain.
- */
-static void I2C_Bus_Recovery(void) {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    // 1. Configure PB6 (SCL) and PB7 (SDA) as Open Drain GPIO outputs with pull-up
-    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    // Keep SDA floating (HIGH via pull-up)
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-
-    // 2. Clock SCL 9 times to release any slave stuck mid-transaction
-    for (int i = 0; i < 9; i++) {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-        HAL_Delay(1);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-        HAL_Delay(1);
-    }
-
-    // 3. Generate STOP condition: SDA transitions from LOW to HIGH while SCL is HIGH
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-    HAL_Delay(1);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-    HAL_Delay(1);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-    HAL_Delay(2);
-
-    // 4. Revert PB6 and PB7 back to Alternate Function Open Drain for hardware I2C1
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
 /* ==============================================================================
  * MAIN FUNCTION & APPLICATION LOOP
  * ============================================================================== */
@@ -676,35 +637,9 @@ int main(void) {
     HAL_Init();
     SystemClock_Config();
 
-    // 2. Initialize GPIOs, un-stick I2C bus, and init hardware I2C1
+    // 2. Initialize GPIOs and I2C1 Peripheral
     MX_GPIO_Init();
-    I2C_Bus_Recovery();
     MX_I2C1_Init();
-
-    // Check if the OLED (0x3C) or any device acknowledges on the I2C bus
-    bool i2cAckReceived = (HAL_I2C_IsDeviceReady(&hi2c1, SSD1306_I2C_ADDR, 3, 10) == HAL_OK);
-    if (!i2cAckReceived) {
-        // Probe full I2C bus 1..127 to see if any device responds
-        for (uint16_t a = 1; a < 128; a++) {
-            if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(a << 1), 2, 5) == HAL_OK) {
-                i2cAckReceived = true;
-                break;
-            }
-        }
-    }
-
-    // Diagnostic indicator: If NO I2C device responds (NO ACK), blink LED 1 rapidly for 5 seconds
-    if (!i2cAckReceived) {
-#if ENABLE_LEDS
-        for (int i = 0; i < 25; i++) { // 25 cycles * 200ms = 5000ms (5 seconds)
-            HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_SET);
-            HAL_Delay(100);
-            HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_RESET);
-            HAL_Delay(100);
-        }
-#endif
-    }
-    // If ACK received, do nothing extra and proceed directly!
 
     // Startup confirmation chime: LED 1 -> LED 2 -> Both + Ascending double beep
 #if ENABLE_LEDS || ENABLE_BUZZER
