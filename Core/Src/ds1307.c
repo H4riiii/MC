@@ -2,13 +2,13 @@
 
 HAL_StatusTypeDef DS1307_Init(I2C_HandleTypeDef *hi2c) {
     // 1. Check if the DS1307 is reachable on the bus (7-bit address 0x68)
-    if (HAL_I2C_IsDeviceReady(hi2c, DS1307_I2C_ADDR, 2, 100) != HAL_OK) {
+    if (HAL_I2C_IsDeviceReady(hi2c, DS1307_I2C_ADDR, 2, 10) != HAL_OK) {
         return HAL_ERROR;
     }
 
     // 2. Read current 7 timekeeper registers
     uint8_t buf[7];
-    if (HAL_I2C_Mem_Read(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 100) != HAL_OK) {
+    if (HAL_I2C_Mem_Read(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 10) != HAL_OK) {
         return HAL_ERROR;
     }
 
@@ -16,31 +16,31 @@ HAL_StatusTypeDef DS1307_Init(I2C_HandleTypeDef *hi2c) {
     // while strictly preserving the user's configured hours, minutes, and seconds!
     if (buf[0] & 0x80) {
         buf[0] &= 0x7F; // Clear CH bit
-        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, &buf[0], 1, 100);
+        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, &buf[0], 1, 10);
     }
 
     // Ensure 24-hour mode (bit 6 of hours register must be 0)
     if (buf[2] & 0x40) {
         uint8_t hr = buf[2] & 0x3F;
-        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_HOURS, 1, &hr, 1, 100);
+        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_HOURS, 1, &hr, 1, 10);
     }
 
     // Ensure date/month/year are valid if completely zeroed out
     if ((buf[4] & 0x3F) == 0 || (buf[5] & 0x1F) == 0) {
         uint8_t dateInit[3] = {DEC_TO_BCD(2), DEC_TO_BCD(11), DEC_TO_BCD(26)};
-        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_DATE, 1, dateInit, 3, 100);
+        HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_DATE, 1, dateInit, 3, 10);
     }
 
     // 3. Ensure Control Register 0x07 has SQWE disabled and output LOW
     uint8_t ctrlReg = 0x00;
-    HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_CONTROL, 1, &ctrlReg, 1, 100);
+    HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_CONTROL, 1, &ctrlReg, 1, 10);
 
     return HAL_OK;
 }
 
 HAL_StatusTypeDef DS1307_GetTime(I2C_HandleTypeDef *hi2c, RTC_DateTime_t *dt) {
     uint8_t buf[7];
-    if (HAL_I2C_Mem_Read(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 100) != HAL_OK) {
+    if (HAL_I2C_Mem_Read(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 10) != HAL_OK) {
         return HAL_ERROR;
     }
 
@@ -80,5 +80,5 @@ HAL_StatusTypeDef DS1307_SetTime(I2C_HandleTypeDef *hi2c, const RTC_DateTime_t *
     buf[5] = DEC_TO_BCD(dt->month > 0 && dt->month <= 12 ? dt->month : 1);
     buf[6] = DEC_TO_BCD((dt->year >= 2000) ? (dt->year - 2000) : dt->year);
 
-    return HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 100);
+    return HAL_I2C_Mem_Write(hi2c, DS1307_I2C_ADDR, DS1307_REG_SECONDS, 1, buf, 7, 10);
 }

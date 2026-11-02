@@ -136,3 +136,34 @@ This file tracks all modifications, driver implementations, bug fixes, and archi
   * **Fix 1**: Smart conditional redraw (only update on actual second change in idle, pure event-driven in menus).
   * **Fix 2**: Reduce RTC timeouts from 100 ms to 10 ms.
 
+---
+
+## Session Date: 2026-11-03
+
+### Fix 1 — Smart Conditional Redraw (`Core/Src/main.c`)
+
+* **Problem:** `updateScreen = true` was unconditionally set at the end of the 500 ms RTC poll block, forcing a full ~105 ms I2C OLED frame transfer twice per second even while in menus (where the second digit is never displayed).
+* **Fix:** Added `static uint8_t lastDisplayedSecond = 0xFF` tracking variable. The 500 ms block now only sets `updateScreen = true` when **both** of these are true: `currentState == NORMAL_IDLE` **and** `currentRtc.seconds != lastDisplayedSecond`. All menu and alarm states are already event-driven (button presses + blink timer), so they never need the 500 ms RTC timer to trigger a redraw.
+* **State transition resets:** Added `lastDisplayedSecond = 0xFF` alongside every `currentState = NORMAL_IDLE` assignment that represents a transition *back* from a menu/alarm (`DOSE_CONFIRMED`, `SETUP_FEEDBACK`, `SETUP_MENU` Btn3 exit). This ensures the clock face is immediately redrawn once on return without waiting up to 500 ms for the next RTC tick.
+* **No functional change** to alarms, dose history, SD logging, or menu navigation.
+
+### Fix 2 — DS1307 I2C Timeout Reduction (`Core/Src/ds1307.c`)
+
+* **Problem:** All `HAL_I2C_Mem_Read` / `HAL_I2C_Mem_Write` calls used 100 ms timeouts. A disconnected or stalled RTC could block the main loop for 100 ms × (up to 6 calls in `DS1307_Init`) = 600 ms per detection cycle.
+* **Fix:** Changed ALL I2C timeout parameters from `100` ms to `10` ms across:
+  * `DS1307_Init()` — 1× `Mem_Read` + 4× conditional `Mem_Write` calls
+  * `DS1307_GetTime()` — 1× `Mem_Read`
+  * `DS1307_SetTime()` — 1× `Mem_Write`
+* **Rationale:** A 7-byte I2C read at 100 kHz SCL takes ~1.1 ms. 10 ms provides a 9× safety margin while capping worst-case RTC stall from 100 ms to 10 ms per call.
+* **Note:** `HAL_I2C_IsDeviceReady` timeout was already changed to 10 ms in a prior session.
+* **No functional change** to time-keeping logic or alarm triggers.
+
+### Fix 3 — SSD1306 Page Addressing Mode & Hardware Erratum Recovery (`Core/Src/ssd1306.c`, `Core/Src/main.c`)
+
+* **Problem:** Setting SSD1306 memory addressing mode to Horizontal (`0x00`) while sending per-page commands (`0xB0 + page`) caused pointer desynchronization whenever an I2C glitch, arbitration delay, or dropped byte occurred. The pointer offset accumulated frame after frame until the entire screen turned into static noise. Furthermore, STM32F103 hardware I2C silicon lockup occurred on reset if the bus lines were low.
+* **Fix:**
+  1. Configured SSD1306 to Page Addressing Mode (`0x02`) in `ssd1306_Init()`, ensuring every page transmission (`0xB0 + page`, `0x00`, `0x10`) explicitly resets column and page pointers.
+  2. Moved `0xAF` (Display ON) to execute directly after enabling the charge pump (`0x8D 0x14`) with a 50 ms stabilization delay, preventing sleep mode freezes.
+  3. Added I2C error recovery in `ssd1306_WriteCommand()` and `ssd1306_UpdateScreen()` to reset HAL `ErrorCode` and `State` upon intermittent dropouts.
+  4. Added `__HAL_RCC_I2C1_FORCE_RESET()` and internal pull-ups (`GPIO_PULLUP`) on PB6/PB7 in `MX_I2C1_Init()`.
+  5. Implemented visual panic blink on Pill 1 LED (`PB1`) in `Error_Handler()`.

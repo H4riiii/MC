@@ -66,6 +66,7 @@ static bool wrongButtonPressed = false;
 static uint32_t lastBlinkToggle = 0;
 static uint32_t lastRtcRead = 0;
 static bool cursorVisible = true;
+static uint8_t lastDisplayedSecond = 0xFF; // Tracks last rendered second; 0xFF forces immediate redraw
 
 // Real-Time Clock state from DS1307
 static RTC_DateTime_t currentRtc = {
@@ -202,7 +203,12 @@ int main(void) {
                                        dose1.hour, dose1.minute, dose2.hour, dose2.minute);
             DoseHistory_UpdateStatus(doseHistory, dose1.hour, dose1.minute, dose2.hour, dose2.minute,
                                      currentRtc.hours, currentRtc.minutes);
-            updateScreen = true;
+            // Fix 1: Only redraw in NORMAL_IDLE when the second digit actually changes.
+            // All menu/alarm states are event-driven (buttons + blink timer) — skip their 500ms redraw.
+            if (currentState == NORMAL_IDLE && currentRtc.seconds != lastDisplayedSecond) {
+                lastDisplayedSecond = currentRtc.seconds;
+                updateScreen = true;
+            }
         }
 
         // 2. Read Active LOW buttons with edge-detection debounce
@@ -313,6 +319,7 @@ int main(void) {
             case DOSE_CONFIRMED:
                 if (now - doseConfirmedTimer >= 2000) {
                     currentState = NORMAL_IDLE;
+                    lastDisplayedSecond = 0xFF; // Force clock face redraw on return
                     updateScreen = true;
                 }
                 break;
@@ -344,6 +351,7 @@ int main(void) {
                 }
                 if (btn3Pressed) {
                     currentState = NORMAL_IDLE;
+                    lastDisplayedSecond = 0xFF; // Force clock face redraw on return
                     updateScreen = true;
                 }
                 break;
@@ -410,6 +418,7 @@ int main(void) {
             case SETUP_FEEDBACK:
                 if (now - feedbackTimer >= 1500) {
                     currentState = NORMAL_IDLE;
+                    lastDisplayedSecond = 0xFF; // Force clock face redraw on return
                     updateScreen = true;
                 }
                 break;
