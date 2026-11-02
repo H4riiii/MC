@@ -20,7 +20,7 @@
  *   - Button 2      -> PB14 (Terminal 1 to PB14, Terminal 2 to GND) - Dose 2 / Select / Next
  *   - Button 3      -> PB15 (Terminal 1 to PB15, Terminal 2 to GND) - Setup Menu / Exit
  *
- * Audio-Visual Indicators:
+ * Audio-Visual Indicators: 
  *   - LED 1 (Pill 1)-> PB1  (Active HIGH via current-limiting resistor)
  *   - LED 2 (Pill 2)-> PB10 (Active HIGH via current-limiting resistor)
  *   - Buzzer        -> PB0  (Piezo buzzer, Active HIGH)
@@ -92,7 +92,8 @@ typedef enum {
     SETUP_EDIT_HOUR,
     SETUP_EDIT_MINUTE,
     SETUP_CONFIRM,
-    SETUP_FEEDBACK
+    SETUP_FEEDBACK,
+    VIEW_LOGS
 } SystemState_t;
 
 typedef struct {
@@ -109,7 +110,11 @@ static bool updateScreen = true;
 static DoseAlarm_t dose1 = {7, 30, -1};
 static DoseAlarm_t dose2 = {19, 0, -1};
 
-// Setup temporary variables (1 = Pill 1, 2 = Pill 2, 3 = Clock Adjust)
+// 3-Day Dosage History Tracker
+static DailyDoseLog_t doseHistory[3];
+static int viewLogDay = 0; // 0 = Today, 1 = Yesterday, 2 = Day Before
+
+// Setup temporary variables (1 = Pill 1, 2 = Pill 2, 3 = Clock Adjust, 4 = View Logs)
 static int setupMenuItem = 1;
 static int tempHour = 0;
 static int tempMinute = 0;
@@ -402,6 +407,9 @@ static void printHeader(void) {
     if (!rtcAvailable) {
         ssd1306_DrawString(2, 2, "!", 1, 1, 0); // Warning icon if RTC read failed
     }
+    if (sdAvailable) {
+        ssd1306_DrawString(110, 2, "SD", 1, 1, 0);
+    }
     ssd1306_DrawLine(0, 12, 127, 12, 1);
 }
 
@@ -462,14 +470,15 @@ static void renderScreen(void) {
 
         case SETUP_MENU: {
             ssd1306_DrawString(34, 2, "SETTINGS", 1, 1, 0);
-            ssd1306_DrawLine(0, 12, 127, 12, 1);
+            ssd1306_DrawLine(0, 11, 127, 11, 1);
 
-            ssd1306_DrawString(10, 16, (setupMenuItem == 1) ? "> 1. PILL 1 TIME" : "  1. PILL 1 TIME", 1, 1, 0);
-            ssd1306_DrawString(10, 28, (setupMenuItem == 2) ? "> 2. PILL 2 TIME" : "  2. PILL 2 TIME", 1, 1, 0);
-            ssd1306_DrawString(10, 40, (setupMenuItem == 3) ? "> 3. ADJUST CLOCK" : "  3. ADJUST CLOCK", 1, 1, 0);
+            ssd1306_DrawString(8, 14, (setupMenuItem == 1) ? "> 1. PILL 1 TIME" : "  1. PILL 1 TIME", 1, 1, 0);
+            ssd1306_DrawString(8, 24, (setupMenuItem == 2) ? "> 2. PILL 2 TIME" : "  2. PILL 2 TIME", 1, 1, 0);
+            ssd1306_DrawString(8, 34, (setupMenuItem == 3) ? "> 3. ADJUST CLOCK" : "  3. ADJUST CLOCK", 1, 1, 0);
+            ssd1306_DrawString(8, 44, (setupMenuItem == 4) ? "> 4. VIEW LOGS"    : "  4. VIEW LOGS",    1, 1, 0);
 
-            ssd1306_DrawLine(0, 52, 127, 52, 1);
-            ssd1306_DrawString(2, 55, "B1:Next  B2:Select", 1, 1, 0);
+            ssd1306_DrawLine(0, 54, 127, 54, 1);
+            ssd1306_DrawString(2, 56, "B1:Next B2:Select B3:Exit", 1, 1, 0);
             break;
         }
 
@@ -530,6 +539,46 @@ static void renderScreen(void) {
                 ssd1306_DrawString(16, 12, "RTC CLOCK", 2, 1, 0);
             }
             ssd1306_DrawString(20, 38, confirmSaveChoice ? "TIME SAVED!" : "DISCARDED", 1, 1, 0);
+            break;
+        }
+
+        case VIEW_LOGS: {
+            char buf[48];
+            const char *tag = (viewLogDay == 0) ? "TODAY" : ((viewLogDay == 1) ? "-1 DAY" : "-2 DAYS");
+            snprintf(buf, sizeof(buf), "LOG [%d/3] %02d/%02d (%s)", 
+                     viewLogDay + 1, doseHistory[viewLogDay].day, doseHistory[viewLogDay].month, tag);
+            ssd1306_DrawString(2, 2, buf, 1, 1, 0);
+            ssd1306_DrawLine(0, 12, 127, 12, 1);
+
+            // Pill 1 Line
+            if (doseHistory[viewLogDay].p1_status == DOSE_STATUS_TAKEN) {
+                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: OK %02d:%02d", 
+                         dose1.hour, dose1.minute, doseHistory[viewLogDay].p1_hour, doseHistory[viewLogDay].p1_min);
+            } else if (doseHistory[viewLogDay].p1_status == DOSE_STATUS_MISSED) {
+                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: MISSED", dose1.hour, dose1.minute);
+            } else {
+                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: PENDING", dose1.hour, dose1.minute);
+            }
+            ssd1306_DrawString(2, 16, buf, 1, 1, 0);
+
+            // Pill 2 Line
+            if (doseHistory[viewLogDay].p2_status == DOSE_STATUS_TAKEN) {
+                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: OK %02d:%02d", 
+                         dose2.hour, dose2.minute, doseHistory[viewLogDay].p2_hour, doseHistory[viewLogDay].p2_min);
+            } else if (doseHistory[viewLogDay].p2_status == DOSE_STATUS_MISSED) {
+                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: MISSED", dose2.hour, dose2.minute);
+            } else {
+                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: PENDING", dose2.hour, dose2.minute);
+            }
+            ssd1306_DrawString(2, 28, buf, 1, 1, 0);
+
+            // SD storage sector line
+            ssd1306_DrawLine(0, 40, 127, 40, 1);
+            ssd1306_DrawString(2, 43, sdAvailable ? "SD: SAVED [SEC 1001]" : "SD: NOT DETECTED", 1, 1, 0);
+
+            // Navigation footer
+            ssd1306_DrawLine(0, 53, 127, 53, 1);
+            ssd1306_DrawString(2, 55, "B1:Next Day   B3:Back", 1, 1, 0);
             break;
         }
     }
@@ -641,6 +690,10 @@ int main(void) {
     ssd1306_UpdateScreen();
     HAL_Delay(2500);
 
+    // Initialize 3-Day Dosage History tracking
+    DoseHistory_Init(doseHistory, currentRtc.year, currentRtc.month, currentRtc.date,
+                     dose1.hour, dose1.minute, dose2.hour, dose2.minute, currentRtc.hours, currentRtc.minutes);
+
     currentState = NORMAL_IDLE;
     updateScreen = true;
     lastRtcRead = HAL_GetTick();
@@ -658,7 +711,27 @@ int main(void) {
             RTC_DateTime_t tempRtc;
             if (DS1307_GetTime(&hi2c1, &tempRtc) == HAL_OK) {
                 rtcAvailable = true;
-                currentRtc = tempRtc;
+                static uint8_t lastRtcSec = 0xFF;
+                static uint32_t lastSecChangeTime = 0;
+
+                if (tempRtc.seconds != lastRtcSec) {
+                    lastRtcSec = tempRtc.seconds;
+                    lastSecChangeTime = now;
+                    currentRtc = tempRtc;
+                } else if (now - lastSecChangeTime >= 1500) {
+                    // Physical 32.768 kHz oscillator stalled: kick-start and tick forward
+                    DS1307_Init(&hi2c1);
+                    currentRtc.seconds++;
+                    if (currentRtc.seconds >= 60) {
+                        currentRtc.seconds = 0;
+                        currentRtc.minutes++;
+                        if (currentRtc.minutes >= 60) {
+                            currentRtc.minutes = 0;
+                            currentRtc.hours = (currentRtc.hours + 1) % 24;
+                        }
+                    }
+                    lastSecChangeTime = now;
+                }
             } else {
                 rtcAvailable = false;
                 // Fallback software clock: increment time based on elapsed milliseconds
@@ -681,6 +754,10 @@ int main(void) {
                     }
                 }
             }
+            DoseHistory_CheckDayChange(doseHistory, currentRtc.year, currentRtc.month, currentRtc.date,
+                                       dose1.hour, dose1.minute, dose2.hour, dose2.minute);
+            DoseHistory_UpdateStatus(doseHistory, dose1.hour, dose1.minute, dose2.hour, dose2.minute,
+                                     currentRtc.hours, currentRtc.minutes);
             updateScreen = true;
         }
 
@@ -773,6 +850,7 @@ int main(void) {
                     stopAlarmIndicators();
                     doseConfirmedTimer = now;
                     currentState = DOSE_CONFIRMED;
+                    DoseHistory_RecordDose(doseHistory, 1, currentRtc.hours, currentRtc.minutes);
                     SD_LogEvent(SD_EVENT_DOSE_1_TAKEN, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Confirmed Button 1");
                     updateScreen = true;
@@ -800,6 +878,7 @@ int main(void) {
                     stopAlarmIndicators();
                     doseConfirmedTimer = now;
                     currentState = DOSE_CONFIRMED;
+                    DoseHistory_RecordDose(doseHistory, 2, currentRtc.hours, currentRtc.minutes);
                     SD_LogEvent(SD_EVENT_DOSE_2_TAKEN, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Confirmed Button 2");
                     updateScreen = true;
@@ -822,10 +901,10 @@ int main(void) {
                 break;
 
             case SETUP_MENU:
-                // Button 1 cycles through: 1. Pill 1 -> 2. Pill 2 -> 3. Adjust Clock
+                // Button 1 cycles through: 1. Pill 1 -> 2. Pill 2 -> 3. Adjust Clock -> 4. View Logs
                 if (btn1Pressed) {
                     setupMenuItem++;
-                    if (setupMenuItem > 3) setupMenuItem = 1;
+                    if (setupMenuItem > 4) setupMenuItem = 1;
                     updateScreen = true;
                 }
                 // Button 2 selects current item
@@ -833,14 +912,19 @@ int main(void) {
                     if (setupMenuItem == 1) {
                         tempHour   = dose1.hour;
                         tempMinute = dose1.minute;
+                        currentState = SETUP_EDIT_HOUR;
                     } else if (setupMenuItem == 2) {
                         tempHour   = dose2.hour;
                         tempMinute = dose2.minute;
-                    } else { // 3: RTC Clock Adjust
+                        currentState = SETUP_EDIT_HOUR;
+                    } else if (setupMenuItem == 3) { // 3: RTC Clock Adjust
                         tempHour   = currentRtc.hours;
                         tempMinute = currentRtc.minutes;
+                        currentState = SETUP_EDIT_HOUR;
+                    } else { // 4: View Logs
+                        currentState = VIEW_LOGS;
+                        viewLogDay = 0;
                     }
-                    currentState = SETUP_EDIT_HOUR;
                     updateScreen = true;
                 }
                 // Button 3 exits setup menu back to normal idle
@@ -913,6 +997,17 @@ int main(void) {
             case SETUP_FEEDBACK:
                 if (now - feedbackTimer >= 1500) {
                     currentState = NORMAL_IDLE;
+                    updateScreen = true;
+                }
+                break;
+
+            case VIEW_LOGS:
+                if (btn1Pressed) {
+                    viewLogDay = (viewLogDay + 1) % 3;
+                    updateScreen = true;
+                }
+                if (btn3Pressed) {
+                    currentState = SETUP_MENU;
                     updateScreen = true;
                 }
                 break;

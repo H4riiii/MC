@@ -23,8 +23,8 @@ def sanitize_text(text):
     text = re.sub(r'`([^`]+)`', r'<font face="Courier" color="#b30000"><b>\1</b></font>', text)
     # Convert bold **text**
     text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', text)
-    # Convert italic *text*
-    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<i>\1</i>', text)
+    # Convert italic *text* (word boundary or non-space)
+    text = re.sub(r'(?<!\*)\*([A-Za-z0-9_][^*]*?[A-Za-z0-9_])\*(?!\*)', r'<i>\1</i>', text)
     return text
 
 def parse_markdown_to_elements(md_path, styles):

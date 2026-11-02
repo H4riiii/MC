@@ -1,109 +1,148 @@
-# Comprehensive Viva & Evaluator Q&A Guide
+# Comprehensive Viva Voce & Evaluator Examination Guide
+## Embedded Electronics Fundamentals for Computer Science Engineers
 
-This guide compiles essential oral examination and evaluation questions for the **Smart Pill Box** embedded project.
-
----
-
-## 1. General Embedded & Architecture Questions
-
-### Q1: Can you explain the overall system block diagram of your project?
-> **Answer:** 
-> The project is centered on the **STM32F103C8T6 (ARM Cortex-M3)** microcontroller. It connects to two slave devices on a shared **I2C1 bus (PB6/PB7)**: a 0.96-inch **SSD1306 128x64 OLED display** and a **DS1307 Real-Time Clock module**. 
-> User interaction is driven by **three pushbuttons (PB12, PB14, PB15)** configured with internal pull-ups. Outputs include **two indicator LEDs (PB1, PB10)** for pill differentiation and a **piezo buzzer (PB0)** for acoustic alerting. Code flashing and hardware debugging are handled via **ST-LINK v2** over **Serial Wire Debug (SWD)** pins PA13 and PA14.
-
-### Q2: Why is the STM32F103C8T6 preferred over an 8-bit Arduino (ATmega328P)?
-> **Answer:**
-> 1. **Processing Power**: 72 MHz 32-bit Cortex-M3 vs 16 MHz 8-bit AVR.
-> 2. **Memory**: 20 KB SRAM (enough for a 1 KB display framebuffer + rich application logic) vs 2 KB on Uno.
-> 3. **Hardware Debugging**: Built-in SWD hardware breakpoint unit and trace vs basic serial printing on Arduino.
-> 4. **Industrial Architecture**: Direct register access, DMA, nested interrupt vector controller (NVIC), and lower power modes.
+This guide prepares Computer Science students to confidently answer technical questions posed by Electronics & Communication (EC) evaluators regarding the **Smart Pill Box** embedded project.
 
 ---
 
-## 2. Real-Time Clock (DS1307) & Bus Architecture
+## Part 1: Electronics & Circuit Physics (The "EC Trap" Questions)
 
-### Q3: How do the OLED and DS1307 share the same I2C lines without colliding?
-> **Answer:**
-> I2C is an addressable multi-drop bus. Each transaction starts with the STM32 transmitting a **START condition** followed by a **7-bit device address**:
-> * **SSD1306 OLED**: Address `0x3C` (`0x78` shifted).
-> * **DS1307 RTC**: Address `0x68` (`0xD0` shifted).
-> Only the peripheral whose internal hardware address matches responds with an **ACK** bit. All other slaves on the bus ignore subsequent data bytes until the next repeated START or STOP condition.
-
-### Q4: Why is the time stored in BCD (Binary-Coded Decimal) in the DS1307?
-> **Answer:**
-> Binary Coded Decimal allocates 4 bits (a nibble) per decimal digit ($0-9$). For example, minute $59$ is represented as `0101 1001b` (`0x59`). This simplifies internal hardware display and date math on dedicated RTC silicon without needing division/modulus arithmetic. Our STM32 driver converts this to standard integers using:
-> `BCD_TO_DEC(x) = (((x) >> 4) * 10) + ((x) & 0x0F)`.
-
-### Q5: What is the Clock Halt (CH) bit, and how does your firmware handle it?
-> **Answer:**
-> Bit 7 of the DS1307 seconds register (`0x00`) is the **Clock Halt (CH)** flag. When power is first applied with a new battery, the oscillator is stopped by default (`CH = 1`) to preserve battery life during shipping. In our `DS1307_Init()` function, we read register `0x00`, clear bit 7 (`secReg &= 0x7F`), and write it back, ensuring the 32.768 kHz oscillator starts ticking immediately.
+### Q1: Why are pull-up resistors required on the I2C bus, and how do you calculate their value?
+> **Answer**: 
+> I2C pins operate in **Open-Drain (`AF_OD`)** mode. Transistors on the chip can only pull the signal line actively to Ground (Logic 0). They cannot drive the line HIGH (Logic 1). Pull-up resistors connected to $V_{DD}$ passively restore the bus to HIGH when all devices release the bus.
+> 
+> **Calculation Formula**:
+> The value of the pull-up resistor $R_p$ is bounded by two physical constraints:
+> 1. **Maximum Value ($R_{p,\max}$)**: Limited by the RC rise time $t_r$ and total bus capacitance $C_b$ (traces + pin capacitances, typically $30-100\,\text{pF}$):
+>    $$R_{p,\max} = \frac{t_{r,\max}}{0.8473 \times C_b}$$
+>    For $100\,\text{kHz}$ standard I2C, $t_{r,\max} = 1000\,\text{ns}$. If $C_b \approx 50\,\text{pF}$:
+>    $$R_{p,\max} \approx \frac{1000 \times 10^{-9}}{0.8473 \times 50 \times 10^{-12}} \approx 23.6\,\text{k}\Omega$$
+> 2. **Minimum Value ($R_{p,\min}$)**: Limited by the maximum sink current ($3\,\text{mA}$) the NMOS transistor can sink while maintaining $V_{OL} \le 0.4\,\text{V}$:
+>    $$R_{p,\min} = \frac{V_{DD} - V_{OL}}{I_{OL}} = \frac{3.3\,\text{V} - 0.4\,\text{V}}{3\,\text{mA}} \approx 966\,\Omega$$
+> Therefore, standard values between **$2.2\,\text{k}\Omega$ and $4.7\,\text{k}\Omega$** are optimal.
 
 ---
 
-## 3. OLED & Graphics Architecture
-
-### Q6: How does the pure C SSD1306 driver work without third-party graphics libraries?
-> **Answer:**
-> A 1024-byte array `SSD1306_Buffer[128 * 64 / 8]` is maintained in STM32 SRAM as a **monochrome framebuffer**. Drawing functions (`DrawPixel`, `DrawLine`, `DrawRect`, `DrawString`) manipulate bits in this RAM buffer. When a redraw is requested, `ssd1306_UpdateScreen()` transmits the entire 1024 bytes across 8 pages over I2C to the SSD1306 controller in a fast burst transaction.
-
-### Q7: Why did you not use direct I2C pixel drawing instead of a framebuffer?
-> **Answer:**
-> SSD1306 memory is organized in 8-bit vertical pages. You cannot set a single pixel directly without reading the existing 8 vertical pixels first (read-modify-write). Doing this over I2C for every line and character would cause severe bus traffic and screen flicker. The 1 KB SRAM framebuffer allows instant drawing with zero I2C traffic until the frame is fully composed.
+### Q2: What is the physical difference between a 5V-Tolerant (FT) pin and a Non-FT pin on the STM32?
+> **Answer**: 
+> * **Non-FT Pins (`PA0` to `PA7`, `PB0`, `PB1`)**: Connect to internal analog multiplexers (ADC/DAC). They have two internal silicon electrostatic discharge (ESD) clamping diodes: one to GND and one to $V_{DD}$ (3.3V). If you apply $5\text{V}$, the upper diode conducts forward current directly into the 3.3V supply rail, causing substrate latch-up and burning out the analog inputs.
+> * **FT Pins (`PB6`, `PB7`, `PB12`, `PB14`, `PB15`)**: Have **no upper clamping diode to $V_{DD}$**. Instead, they feature an isolated parasitic N-well with a reverse breakdown threshold exceeding $6.0\text{V}$, allowing them to connect safely to 5V open-drain pull-ups.
 
 ---
 
-## 4. Safety Logic & Human-Machine Interface (HMI)
-
-### Q8: How does the Smart Pill Box prevent medication errors?
-> **Answer:**
-> The system implements a **two-stage verification state machine**:
-> 1. When an alarm triggers (e.g. Pill 1 at 07:30), the screen displays `"TAKE: >> PILL 1 <<"`, and LED 1 blinks with a 500 ms acoustic alert.
-> 2. If the user presses the wrong button (Button 2 instead of Button 1), the system switches to a rapid **150 ms warning alert**, flashing an inverse video `"WRONG PILL!"` screen instructing the user to stop and press the correct button.
-> 3. An alarm only clears and displays `"DOSE TAKEN"` when the matching correct button is pressed.
-
-### Q9: How are button bounces handled in your firmware?
-> **Answer:**
-> Instead of using blocking delays (`HAL_Delay`), button inputs use a non-blocking edge-detection algorithm based on `HAL_GetTick()`. When a button pin transitions from HIGH to LOW, a state timestamp is checked:
-> `if (now - lastButtonPress > DEBOUNCE_TIME) { ... }`
-> A 200 ms debounce threshold rejects mechanical contact bounce without stalling the clock display or alarm buzzer.
-
-### Q10: How does the on-device clock adjustment work using only 3 buttons?
-> **Answer:**
-> 1. **Button 3 (`PB15`)**: Opens the `SETUP_MENU`.
-> 2. **Button 1 (`PB12`)**: Cycles through options: `1. PILL 1 TIME`, `2. PILL 2 TIME`, `3. ADJUST CLOCK`.
-> 3. **Button 2 (`PB14`)**: Selects the active item.
-> 4. During editing:
->    * Button 1 increments the flashing field (Hours $0-23$, then Minutes $0-59$).
->    * Button 2 advances to the next field and opens the Save Confirmation screen.
-> 5. When confirmed, `DS1307_SetTime()` writes the new time directly to the RTC over I2C.
+### Q3: Why does the DS1307 RTC fail if powered by 3.3V instead of 5V?
+> **Answer**: 
+> The DS1307 has an internal **analog power-fail comparator circuit**. Its reference threshold is:
+> $$V_{PF} = 1.25 \times V_{BAT} = 1.25 \times 3.0\,\text{V} = 3.75\,\text{V}$$
+> If $V_{CC}$ drops below $V_{PF}$ (e.g. connecting to the $3.3\,\text{V}$ rail):
+> 1. The comparator trips to protect non-volatile memory.
+> 2. The internal logic disconnects $V_{CC}$ and switches to the coin battery ($V_{BAT}$).
+> 3. It **locks out the I2C interface**, holding SDA and SCL in high-impedance and refusing to send ACK bits.
+> Therefore, $V_{CC}$ must be connected to the **$5\text{V}$ pin** (fed by USB). Because the STM32 I2C pins `PB6` and `PB7` are FT-rated and pulled to 3.3V, communication is completely safe.
 
 ---
 
-## 5. Storage (MicroSD Card) & Diagnostic Architecture
+### Q4: Why is a 32.768 kHz crystal used for the RTC instead of a common 8 MHz crystal?
+> **Answer**: 
+> 1. **Binary Division**: $32,768$ is an exact power of two ($2^{15}$). A chain of 15 toggle flip-flops divides this down to an exact $1.000\,\text{Hz}$ (1-second tick) using simple logic gates without rounding errors:
+>    $$\frac{32,768\,\text{Hz}}{2^{15}} = 1.000\,\text{Hz}$$
+> 2. **Power Conservation**: Dynamic CMOS power consumption is proportional to frequency ($P = C \cdot V^2 \cdot f$). Running the oscillator at $32.768\,\text{kHz}$ draws less than $500\,\text{nA}$, allowing a small $220\,\text{mAh}$ CR2032 coin cell to sustain the clock for over **10 years**.
 
-### Q11: How does the MicroSD Card communicate with the STM32, and on what pins?
-> **Answer:**
-> The MicroSD module communicates via **hardware SPI1** on Port A pins:
-> * **`PA4`**: Chip Select (`CS` - Active LOW GPIO Output)
-> * **`PA5`**: Clock (`SCK` - SPI1 Alternate Function)
-> * **`PA6`**: Master In Slave Out (`MISO` - SPI1 Input with Pull-Up)
-> * **`PA7`**: Master Out Slave In (`MOSI` - SPI1 Alternate Function)
-> This cleanly preserves Port B for the I2C bus (`PB6`/`PB7`), push buttons (`PB12`, `PB14`, `PB15`), and indicator outputs (`PB0`, `PB1`, `PB10`).
+---
 
-### Q12: What exact files are stored on the SD Card and why?
-> **Answer:**
-> 1. **`CONFIG.TXT`**: Holds non-volatile configurations for `dose1` and `dose2` hours and minutes. Loaded at startup to restore schedules after power cycling, and overwritten whenever schedules are modified in the setup menu.
-> 2. **`LOGS.CSV`**: An audit trail recording every medication event (`DOSE_1_TAKEN`, `DOSE_2_TAKEN`, `WRONG_BUTTON`, `CLOCK_ADJUST`, `CONFIG_UPDATE`) formatted with RTC timestamps. It can be opened directly on a PC in Microsoft Excel.
+### Q5: How did you implement switch debouncing without hardware RC filters?
+> **Answer**: 
+> Pushbutton metal contacts bounce mechanically for $5\text{ to }20\,\text{ms}$ upon closing. While an RC low-pass filter ($R = 10\,\text{k}\Omega, C = 100\,\text{nF}, \tau = 1\,\text{ms}$) can filter this in hardware, it adds passive component cost. 
+> 
+> We implemented **non-blocking software edge-detection debouncing** using `HAL_GetTick()`:
+> ```c
+> if (lastButtonState == GPIO_PIN_SET && currentPinState == GPIO_PIN_RESET) {
+>     if (now - lastPressTimestamp > 200) { // 200 ms lockout threshold
+>         lastPressTimestamp = now;
+>         // Register valid user click
+>     }
+> }
+> ```
+> This accepts the instantaneous first contact edge and locks out subsequent bounce transitions without using a blocking `HAL_Delay()`.
 
-### Q13: What happens if the SD card or RTC is physically unplugged or absent?
-> **Answer:**
-> The firmware uses **non-blocking graceful degradation**:
-> * If the SD card is missing, `SD_Init()` fails and sets `sdAvailable = false`. The firmware defaults to internal RAM schedules and does not crash or block.
-> * If the DS1307 RTC is missing or unpowered, the system falls back to `HAL_GetTick()` elapsed time accumulation, displaying an alert symbol (`!`) while keeping alarms, timers, and buttons fully responsive.
-> * During power-on, a diagnostic screen runs an I2C scan (`0x01`–`0x7F`) and reports both `RTC: OK/NONE` and `SD: OK/NONE`.
+---
 
-### Q14: Can the DS1307 RTC be powered with 3.3V, and why?
-> **Answer:**
-> No. The DS1307 datasheet specifies an operating voltage of $4.5\text{ V} \text{ to } 5.5\text{ V}$. Its internal power-fail threshold disables the I2C interface when $V_{CC} < 1.25 \times V_{BAT}$ ($\approx 3.75\text{ V}$), forcing battery-backup mode. Therefore, $V_{CC}$ is connected to the Blue Pill's $5\text{ V}$ pin. The STM32's `PB6` and `PB7` pins are 5V-tolerant (FT) and communicate safely with the bus.
+### Q6: How does the OLED display generate 7.5V to 9V from a 3.3V power supply?
+> **Answer**: 
+> Organic LEDs (OLEDs) require forward voltages around $7-9\text{V}$ to overcome their bandgap and emit photons. The SSD1306 controller incorporates an internal **switched-capacitor DC-DC charge pump**:
+> * During phase 1, external flying capacitors across pins `C1P/C1N` and `C2P/C2N` charge in parallel from the 3.3V supply.
+> * During phase 2, internal MOS switches stack the charged capacitors in series, stepping up the potential to $\approx 7.5\text{V}$.
+> * In firmware, this is commanded during `ssd1306_Init()` via opcodes `0x8D, 0x14`.
 
+---
 
+## Part 2: Protocols, Microcontroller Architecture & Firmware
+
+### Q7: How can both the OLED and RTC share the exact same pins (PB6 and PB7) without bus collisions?
+> **Answer**: 
+> I2C is a synchronous, multi-drop, address-delimited serial bus. Every bus transfer begins with a START condition followed by a **7-bit device address**:
+> * **SSD1306 OLED**: Address `0x3C` (`0x78` shifted for write).
+> * **DS1307 RTC**: Address `0x68` (`0xD0` shifted for write).
+> Only the peripheral whose internal hardware address matches the broadcast address responds with an **ACK (Acknowledge)** bit by pulling SDA LOW on the 9th clock pulse. All other slaves ignore subsequent data bytes until a STOP condition is asserted.
+
+---
+
+### Q8: What are the differences between SPI and I2C in this project?
+> **Answer**: 
+
+| Parameter | I2C1 (OLED & DS1307) | SPI1 (MicroSD Card) |
+| :--- | :--- | :--- |
+| **Physical Lines** | 2 wires (`SCL`, `SDA`) | 4 wires (`SCK`, `MISO`, `MOSI`, `CS`) |
+| **Addressing** | Software 7-bit addressing | Hardware Chip Select pin (`PA4`) |
+| **Bus Topology** | Open-drain with external pull-ups | Push-pull (Active HIGH/LOW) |
+| **Clock Speed** | Standard 100 kHz | 9 MHz data / 281 kHz init |
+| **Duplex** | Half-duplex (shared data line) | Full-duplex (separate MISO & MOSI) |
+| **Throughput** | ~10 KB/s | ~1.1 MB/s |
+
+---
+
+### Q9: Why is Flash Latency set to 2 wait states in SystemClock_Config()?
+> **Answer**: 
+> The internal Flash memory of the STM32F103 cannot deliver instructions faster than $24\,\text{MHz}$ without read errors. Since our CPU core ($SYSCLK$) runs at $72\,\text{MHz}$, the Flash access controller must insert wait states (clock delay cycles):
+> * $0-24\text{ MHz}$: 0 Wait States
+> * $24-48\text{ MHz}$: 1 Wait State
+> * $48-72\text{ MHz}$: **2 Wait States (`FLASH_LATENCY_2`)**
+> If set to 0 wait states at 72 MHz, the instruction prefetcher reads garbage opcodes and immediately crashes into a `HardFault`.
+
+---
+
+### Q10: How does the pure-C SSD1306 driver avoid third-party library overhead?
+> **Answer**: 
+> Libraries like Adafruit GFX or U8g2 consume significant Flash memory and pull in large C++ font hierarchies. Our pure-C driver maintains a local **1,024-byte SRAM monochrome framebuffer** (`128 * 64 / 8 bytes`), consuming only **5% of the 20 KB SRAM**. Drawing functions compute byte and bit offsets using fast bit-shift math:
+> $$\text{Byte Index} = x + \left(\frac{y}{8} \times 128\right),\quad \text{Bit Mask} = 1 \ll (y \pmod 8)$$
+> The full display buffer is transferred to the physical GDDRAM across 8 pages in burst mode.
+
+---
+
+## Part 3: Safety Logic, MicroSD Storage & Dosage History
+
+### Q11: How does the system prevent accidental medication errors?
+> **Answer**: 
+> The system implements a **two-stage interlocked verification state machine**:
+> 1. When an alarm triggers (e.g. Pill 1 at 07:30), the screen displays `"TAKE: >> PILL 1 <<"`, and LED 1 flashes with a 500 ms alert tone.
+> 2. If the patient presses Button 2 (Pill 2) instead of Button 1, the firmware detects the mismatch, enters a high-urgency **150 ms fast alert**, flashes an inverted video **`"WRONG PILL!"`** warning, and logs `SD_EVENT_WRONG_BUTTON`.
+> 3. The alarm only silences and confirms when the patient presses the correct button for that specific pill.
+
+---
+
+### Q12: How does the On-OLED 3-Day Dosage Viewer operate?
+> **Answer**: 
+> Selecting **`> 4. VIEW LOGS`** in the Settings menu opens a 1-page-per-day history viewer:
+> * **Page 1 (Today)**: Shows today's date, whether Pill 1 and Pill 2 are `TAKEN` (with recorded time, e.g. 07:31), `PENDING` (time has not arrived), or `MISSED`.
+> * **Page 2 (Yesterday, -1d)** & **Page 3 (Day Before, -2d)**: Displays compliance history for the preceding 48 hours.
+> * **Navigation**: Button 1 (`PB12`) cycles through the 3 pages, and Button 3 (`PB15`) returns to the menu. Dates are calculated using an embedded calendar algorithm that accounts for month boundaries and leap years.
+
+---
+
+### Q13: How does persistent alarm configuration on the MicroSD card work?
+> **Answer**: 
+> When the user edits and saves alarm schedules in the menu, the firmware writes a 512-byte block to **Sector 1000** of the SD card containing:
+> ```text
+> PILLBOX_CFG_V1 P1=07:30 P2=19:00\r\n
+> ```
+> At power-on, `SD_LoadConfig()` reads Sector 1000 using `CMD17`. If the `PILLBOX_CFG_V1` header is present, it parses the hours and minutes, restoring user schedules across power outages without needing an external computer.

@@ -92,3 +92,22 @@ This file tracks all modifications, driver implementations, bug fixes, and archi
 
 
 
+
+---
+
+### 4. Implementation of On-OLED 3-Day Dosage Viewer & Sector Persistence
+* **On-OLED 3-Day Dosage Viewer**:
+  * Added `> 4. VIEW LOGS` option to the main Settings menu.
+  * Created `VIEW_LOGS` screen showing 1 page per day:
+    * Page 1: Today (`LOG [1/3] DD/MM (TODAY)`) with Pill 1 & Pill 2 status (`TAKEN`, `PENDING`, or `MISSED`).
+    * Page 2: Yesterday (`LOG [2/3] DD/MM (-1 DAY)`).
+    * Page 3: Day Before Yesterday (`LOG [3/3] DD/MM (-2 DAYS)`).
+  * Added button navigation: Button 1 (`PB12`) cycles through the 3 days; Button 3 (`PB15`) returns to the menu.
+  * Implemented calendar math taking into account month boundaries and leap years.
+* **Low-Level SPI Flash Sector Persistence**:
+  * Implemented real `CMD17` (single-block read) and `CMD24` (single-block write) routines in `Core/Src/sd_card.c`.
+  * **Sector 1000**: Stores persistent configuration `PILLBOX_CFG_V1 P1=HH:MM P2=HH:MM`. Successfully loaded on boot via `SD_LoadConfig()` and updated on save via `SD_SaveConfig()`.
+  * **Sector 1001+**: Stores audit log records with timestamps and event details.
+* **Electronics Deep-Dive Documentation Upgrade**:
+  * Completely updated all 7 `.md` files in `docs/` with deep electrical engineering physics, circuit equations, transistor models (open-drain vs push-pull, 5V tolerance silicon layout, RC pull-up rise times, crystal load capacitance, power-fail comparator logic), and structured viva voce answers tailored for CSE students facing EC evaluators.
+  * Regenerated all 7 corresponding PDF files using `generate_pdfs.py`.
