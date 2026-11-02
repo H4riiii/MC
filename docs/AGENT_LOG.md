@@ -75,4 +75,20 @@ This file tracks all modifications, driver implementations, bug fixes, and archi
   * Added event logging on `SD_LogEvent()` for correct intake confirmation, wrong button tampering, and RTC clock re-calibrations.
   * Updated OLED boot splash screen to report both `RTC: OK/NONE` and `SD: OK/NONE`.
 
+### 3. Automated Documentation PDF Generator & Maintenance Rule
+* **MANDATE FOR ALL FUTURE AGENTS**:
+  * Whenever any documentation file `docs/*.md` (except `AGENT_LOG.md`) is created or modified, the agent MUST immediately regenerate and update the matching PDF files in `docs/` by running:
+    ```bash
+    python3 docs/generate_pdfs.py
+    ```
+  * `generate_pdfs.py` parses headings, tables, code blocks, alerts, and formatting into clean printable PDF documents:
+    * `01_project_overview.pdf`
+    * `02_stm32_architecture.pdf`
+    * `03_stlink_swd_debugging.pdf`
+    * `04_oled_ssd1306_driver.pdf`
+    * `05_ds1307_rtc_subsystem.pdf`
+    * `06_sd_card_logging_roadmap.pdf`
+    * `07_viva_evaluator_qa.pdf`
+
+
 
