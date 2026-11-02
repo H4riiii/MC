@@ -673,16 +673,34 @@ int main(void) {
         }
     }
 
-    // 5. I2C Bus Scan & Diagnostic Splash Screen
+    // 5. I2C Bus Scan & Hardware Diagnostic LED Indicators
     uint8_t foundDevices[8] = {0};
     uint8_t foundCount = 0;
+    bool oledDetected = false;
+    bool rtcDetected = false;
+
     for (uint16_t addr = 1; addr < 128; addr++) {
         if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 10) == HAL_OK) {
             if (foundCount < 8) {
                 foundDevices[foundCount++] = (uint8_t)addr;
             }
+            if (addr == 0x3C || addr == 0x3D) {
+                oledDetected = true;
+            }
+            if (addr == 0x68) {
+                rtcDetected = true;
+            }
         }
     }
+
+    // Hardware LED Diagnostic:
+    // - If OLED OK (0x3C)  -> Turn ON LED 1 (PB1)
+    // - If RTC OK (0x68)   -> Turn ON LED 2 (PB10)
+    // - If Both OK         -> Both LEDs ON
+#if ENABLE_LEDS
+    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, oledDetected ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, rtcDetected ? GPIO_PIN_SET : GPIO_PIN_RESET);
+#endif
 
     ssd1306_Clear(0);
     ssd1306_DrawString(8, 4, "I2C BUS SCAN:", 1, 1, 0);
