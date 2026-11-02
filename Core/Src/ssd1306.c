@@ -131,9 +131,20 @@ static void ssd1306_SetPage(uint8_t page) {
     ssd1306_WriteCommand(page);
 }
 
-void ssd1306_Init(I2C_HandleTypeDef *hi2c) {
+bool ssd1306_Init(I2C_HandleTypeDef *hi2c) {
     pOledI2c = hi2c;
     activeOledAddr = SSD1306_I2C_ADDR;
+    HAL_Delay(100); // let the OLED supply settle after power-up
+
+    // Auto-detect 0x3C or 0x3D; report whether anything ACKed
+    bool present = true;
+    if (HAL_I2C_IsDeviceReady(pOledI2c, SSD1306_I2C_ADDR, 3, 50) != HAL_OK) {
+        if (HAL_I2C_IsDeviceReady(pOledI2c, SSD1306_ALT_ADDR, 3, 50) == HAL_OK) {
+            activeOledAddr = SSD1306_ALT_ADDR;
+        } else {
+            present = false;
+        }
+    }
 
     ssd1306_WriteCommand(0xAE); // Display OFF
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
@@ -165,11 +176,18 @@ void ssd1306_Init(I2C_HandleTypeDef *hi2c) {
 
     ssd1306_WriteCommand(0xAF); // Display ON
 
+    // TEMPORARY DIAGNOSTIC: force every pixel on for 1.5 s, independent of GDDRAM contents.
+    // All white = panel, charge pump and I2C commands work. Remove once the display is confirmed.
+    ssd1306_WriteCommand(0xA5);
+    HAL_Delay(1500);
+    ssd1306_WriteCommand(0xA4);
+
     // GDDRAM powers up with random data (the static noise): blank it page by page
     for (uint8_t page = 0; page < 8; page++) {
         ssd1306_BeginPage(page);
         ssd1306_EndPage();
     }
+    return present;
 }
 
 void ssd1306_Clear(uint8_t color) {

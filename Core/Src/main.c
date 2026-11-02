@@ -99,7 +99,10 @@ int main(void) {
     Buttons_Init();
 
     // 3. Initialize SSD1306 OLED Display (Zero-Grain init)
-    ssd1306_Init(&hi2c1);
+    if (!ssd1306_Init(&hi2c1)) {
+        // Diagnostic: no ACK from the OLED -> LED1 (PB1) stays on
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+    }
 
     // 4. Initialize DS1307 Real Time Clock
     if (DS1307_Init(&hi2c1) == HAL_OK) {

@@ -56,6 +56,8 @@ typedef struct {
 
 /* Status & API */
 bool SD_Init(void);
+/* Init diagnostics: stage 1-6 reached, last response byte, SPI wait time-outs */
+extern volatile uint8_t SD_DebugStage, SD_DebugResp, SD_DebugSpiTimeouts;
 bool SD_IsAvailable(void);
 
 /* Low-level Block Operations */

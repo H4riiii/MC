@@ -24,7 +24,7 @@ extern "C" {
 #define SSD1306_ALT_ADDR  (0x3D << 1) // 0x7A: Alternative address
 
 /* Core Driver Functions */
-void ssd1306_Init(I2C_HandleTypeDef *hi2c);
+bool ssd1306_Init(I2C_HandleTypeDef *hi2c); // false if no OLED ACKed at 0x3C/0x3D
 void ssd1306_Clear(uint8_t color);   // fills the current 128-byte page only (no frame buffer)
 void ssd1306_BeginPage(uint8_t page); // start rendering page 0..7 (clears it)
 void ssd1306_EndPage(void);           // stream the rendered page to the OLED

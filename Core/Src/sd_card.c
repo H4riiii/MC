@@ -10,13 +10,24 @@
 static bool sdCardReady = false;
 static bool isSDHC = true; // Assume standard block addressing (SDHC/SDXC or block mode)
 
+/* Diagnostics: last init stage reached, last command response, and SPI wait time-outs */
+volatile uint8_t SD_DebugStage = 0;
+volatile uint8_t SD_DebugResp  = 0;
+volatile uint8_t SD_DebugSpiTimeouts = 0;
+
 /* Low-level SPI transmission helper */
 static uint8_t SPI1_Transfer(uint8_t data) {
+    uint32_t guard = 100000;
     // Wait until TXE (Transmit buffer empty)
-    while (!(SPI1->SR & SPI_SR_TXE));
+    while (!(SPI1->SR & SPI_SR_TXE)) {
+        if (--guard == 0) { SD_DebugSpiTimeouts++; return 0xFF; }
+    }
     SPI1->DR = data;
+    guard = 100000;
     // Wait until RXNE (Receive buffer not empty)
-    while (!(SPI1->SR & SPI_SR_RXNE));
+    while (!(SPI1->SR & SPI_SR_RXNE)) {
+        if (--guard == 0) { SD_DebugSpiTimeouts++; return 0xFF; }
+    }
     return (uint8_t)(SPI1->DR);
 }
 
@@ -92,7 +103,9 @@ static void SD_LowLevel_Init(void) {
  * @brief Initialize the SD Card in SPI mode
  */
 bool SD_Init(void) {
+    SD_DebugStage = 1;
     SD_LowLevel_Init();
+    SD_DebugStage = 2;
 
     // 1. Send at least 74 clock cycles with CS HIGH to enter SPI mode
     SD_Deselect();
@@ -103,6 +116,8 @@ bool SD_Init(void) {
     // 2. CMD0 (GO_IDLE_STATE) with valid CRC 0x95
     uint8_t res = SD_SendCommand(0, 0, 0x95);
     SD_Deselect();
+    SD_DebugStage = 3;
+    SD_DebugResp = res;
 
     if (res != 0x01) {
         sdCardReady = false;
@@ -110,6 +125,7 @@ bool SD_Init(void) {
     }
 
     // 3. CMD8 (SEND_IF_COND) to verify voltage range (2.7V-3.6V)
+    SD_DebugStage = 4;
     res = SD_SendCommand(8, 0x1AA, 0x87);
     if (res == 0x01) {
         // Read 4 bytes return packet
@@ -120,6 +136,7 @@ bool SD_Init(void) {
     SD_Deselect();
 
     // 4. Send ACMD41 loop until card is ready (returns 0x00)
+    SD_DebugStage = 5;
     uint32_t timeout = 500;
     do {
         // CMD55 (APP_CMD)
@@ -132,7 +149,9 @@ bool SD_Init(void) {
         timeout--;
     } while ((res != 0x00) && (timeout > 0));
 
+    SD_DebugResp = res;
     if (res == 0x00) {
+        SD_DebugStage = 6;
         // Check OCR (CMD58) to check if card uses block addressing (CCS bit)
         res = SD_SendCommand(58, 0, 0x00);
         if (res == 0x00) {
