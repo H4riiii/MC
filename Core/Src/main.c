@@ -681,6 +681,31 @@ int main(void) {
     I2C_Bus_Recovery();
     MX_I2C1_Init();
 
+    // Check if the OLED (0x3C) or any device acknowledges on the I2C bus
+    bool i2cAckReceived = (HAL_I2C_IsDeviceReady(&hi2c1, SSD1306_I2C_ADDR, 3, 10) == HAL_OK);
+    if (!i2cAckReceived) {
+        // Probe full I2C bus 1..127 to see if any device responds
+        for (uint16_t a = 1; a < 128; a++) {
+            if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(a << 1), 2, 5) == HAL_OK) {
+                i2cAckReceived = true;
+                break;
+            }
+        }
+    }
+
+    // Diagnostic indicator: If NO I2C device responds (NO ACK), blink LED 1 rapidly for 5 seconds
+    if (!i2cAckReceived) {
+#if ENABLE_LEDS
+        for (int i = 0; i < 25; i++) { // 25 cycles * 200ms = 5000ms (5 seconds)
+            HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_SET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_RESET);
+            HAL_Delay(100);
+        }
+#endif
+    }
+    // If ACK received, do nothing extra and proceed directly!
+
     // Startup confirmation chime: LED 1 -> LED 2 -> Both + Ascending double beep
 #if ENABLE_LEDS || ENABLE_BUZZER
     HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_SET);
