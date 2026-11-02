@@ -271,19 +271,16 @@ static void ssd1306_WriteCommand(uint8_t cmd) {
     HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x00, 1, &cmd, 1, 100);
 }
 
-void ssd1306_Clear(uint8_t color);
-void ssd1306_UpdateScreen(void);
-
 void ssd1306_Init(void) {
     HAL_Delay(100);
-    ssd1306_WriteCommand(0xAE); // Display OFF (blank during init to prevent static noise)
+    ssd1306_WriteCommand(0xAE); // Display OFF
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
-    ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode (automatic column wrap)
+    ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode
     ssd1306_WriteCommand(0xB0); // Page start address 0
     ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
-    ssd1306_WriteCommand(0x00); // Low column address 0
-    ssd1306_WriteCommand(0x10); // High column address 0
-    ssd1306_WriteCommand(0x40); // Start line address 0
+    ssd1306_WriteCommand(0x00); // Low column address
+    ssd1306_WriteCommand(0x10); // High column address
+    ssd1306_WriteCommand(0x40); // Start line address
     ssd1306_WriteCommand(0x81); // Set contrast control
     ssd1306_WriteCommand(0x7F);
     ssd1306_WriteCommand(0xA1); // Set segment re-map (A0/A1)
@@ -302,15 +299,8 @@ void ssd1306_Init(void) {
     ssd1306_WriteCommand(0xDB); // Vcomh
     ssd1306_WriteCommand(0x40);
     ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump (crucial to generate ~7.5V OLED panel voltage!)
-
-    // Clear RAM buffer and flush zeros to OLED GDDRAM *before* turning display ON
-    // This permanently eliminates power-on static noise!
-    ssd1306_Clear(0);
-    ssd1306_UpdateScreen();
-
+    ssd1306_WriteCommand(0x14); // Enable charge pump
     ssd1306_WriteCommand(0xAF); // Display ON
-    HAL_Delay(50);
 }
 
 void ssd1306_Clear(uint8_t color) {
@@ -640,30 +630,6 @@ int main(void) {
     // 2. Initialize GPIOs and I2C1 Peripheral
     MX_GPIO_Init();
     MX_I2C1_Init();
-
-    // Startup confirmation chime: LED 1 -> LED 2 -> Both + Ascending double beep
-#if ENABLE_LEDS || ENABLE_BUZZER
-    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-    HAL_Delay(60);
-    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-    HAL_Delay(70);
-
-    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-    HAL_Delay(60);
-    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-    HAL_Delay(70);
-
-    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN | LED_2_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-    HAL_Delay(120);
-    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN | LED_2_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-    HAL_Delay(100);
-#endif
 
     // 3. Initialize SSD1306 OLED Display
     ssd1306_Init();
