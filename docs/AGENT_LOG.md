@@ -111,3 +111,28 @@ This file tracks all modifications, driver implementations, bug fixes, and archi
 * **Electronics Deep-Dive Documentation Upgrade**:
   * Completely updated all 7 `.md` files in `docs/` with deep electrical engineering physics, circuit equations, transistor models (open-drain vs push-pull, 5V tolerance silicon layout, RC pull-up rise times, crystal load capacitance, power-fail comparator logic), and structured viva voce answers tailored for CSE students facing EC evaluators.
   * Regenerated all 7 corresponding PDF files using `generate_pdfs.py`.
+
+---
+
+## Session Date: 2026-11-03
+
+### 1. Dedicated OLED Hardware Diagnostics Suite (`test/`)
+* Created isolated standalone diagnostic firmware `test/main_oled_test.c` with zero peripheral dependencies.
+* Added auto-detection for I2C addresses `0x3C`/`0x3D`, clean zero-grain GDDRAM pre-flush before `0xAF` Display ON, alignment test patterns, typography verification, and real-time animation tests.
+
+### 2. Architectural Modularization of `Core/Src/main.c`
+* Split monolithic 1129-line `main.c` into single-responsibility hardware abstraction modules:
+  * `Core/Inc/ssd1306.h` & `Core/Src/ssd1306.c`: Pure C SSD1306 I2C driver, font table, and graphics primitives.
+  * `Core/Inc/ui_screens.h` & `Core/Src/ui_screens.c`: FSM screen layout renderer (`NORMAL_IDLE`, reminders, menus, time editing, 3-day history).
+  * `Core/Inc/buttons.h` & `Core/Src/buttons.c`: Edge-detection debouncer for PB12, PB14, PB15.
+  * `Core/Inc/alarms.h` & `Core/Src/alarms.c`: GPIO indicator drivers for Pill 1 LED (PB1), Pill 2 LED (PB10), and Buzzer (PB0).
+  * Reduced `main.c` down to a clean, readable orchestrator.
+
+### 3. OLED Buffering Root-Cause Diagnosis & Fix Strategy
+* Identified root causes of screen "buffering" / flickering:
+  * Unconditional 500 ms redraw loop causing ~105 ms I2C transmission freezes.
+  * 100 ms blocking timeouts on DS1307 I2C reads stalling the super-loop.
+* Created fix implementation plan `docs/OLED_BUFFER_FIX_PLAN.md`:
+  * **Fix 1**: Smart conditional redraw (only update on actual second change in idle, pure event-driven in menus).
+  * **Fix 2**: Reduce RTC timeouts from 100 ms to 10 ms.
+
