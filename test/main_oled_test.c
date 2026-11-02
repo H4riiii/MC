@@ -149,7 +149,10 @@ static const uint8_t font5x7[95][5] = {
  * LOW-LEVEL OLED DRIVER (Zero-Grain Initialization & Drawing)
  * ============================================================================== */
 static void ssd1306_WriteCommand(uint8_t cmd) {
-    HAL_I2C_Mem_Write(&hi2c1, activeOledAddr, 0x00, 1, &cmd, 1, 50);
+    if (HAL_I2C_Mem_Write(&hi2c1, activeOledAddr, 0x00, 1, &cmd, 1, 50) != HAL_OK) {
+        hi2c1.ErrorCode = HAL_I2C_ERROR_NONE;
+        hi2c1.State = HAL_I2C_STATE_READY;
+    }
 }
 
 void ssd1306_Clear(uint8_t color) {
@@ -158,17 +161,19 @@ void ssd1306_Clear(uint8_t color) {
 
 void ssd1306_UpdateScreen(void) {
     for (uint8_t page = 0; page < 8; page++) {
-        ssd1306_WriteCommand(0xB0 + page); // Set page start address
+        ssd1306_WriteCommand(0xB0 + page); // Set page start address (Page Addressing Mode)
         ssd1306_WriteCommand(0x00);        // Set lower column start address
         ssd1306_WriteCommand(0x10);        // Set higher column start address
-        HAL_I2C_Mem_Write(&hi2c1, activeOledAddr, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100);
+        if (HAL_I2C_Mem_Write(&hi2c1, activeOledAddr, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100) != HAL_OK) {
+            hi2c1.ErrorCode = HAL_I2C_ERROR_NONE;
+            hi2c1.State = HAL_I2C_STATE_READY;
+        }
     }
 }
 
 /**
  * @brief Initialize SSD1306 cleanly.
- *        To prevent startup "grain" or "static snow":
- *        We write 1024 zero bytes into internal display RAM BEFORE turning on Display (0xAF).
+ *        Uses robust Page Addressing Mode (0x02) to lock each page to 0xB0+page.
  */
 bool ssd1306_Init(void) {
     // 1. Give OLED controller 50ms to power stabilize
@@ -186,13 +191,7 @@ bool ssd1306_Init(void) {
     // 3. SSD1306 Configuration Sequence
     ssd1306_WriteCommand(0xAE); // Display OFF
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
-    ssd1306_WriteCommand(0x00); // 00b = Horizontal Addressing Mode
-    ssd1306_WriteCommand(0x21); // Set Column Address range
-    ssd1306_WriteCommand(0x00); // Column Start 0
-    ssd1306_WriteCommand(0x7F); // Column End 127
-    ssd1306_WriteCommand(0x22); // Set Page Address range
-    ssd1306_WriteCommand(0x00); // Page Start 0
-    ssd1306_WriteCommand(0x07); // Page End 7
+    ssd1306_WriteCommand(0x02); // 02b = Page Addressing Mode (resets pointers per page, prevents noise creep)
     ssd1306_WriteCommand(0xB0); // Page start address 0
     ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
     ssd1306_WriteCommand(0x00); // Low column address
@@ -216,15 +215,16 @@ bool ssd1306_Init(void) {
     ssd1306_WriteCommand(0xDB); // Vcomh
     ssd1306_WriteCommand(0x40);
     ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump
+    ssd1306_WriteCommand(0x14); // Enable charge pump (generates ~7.5V)
 
-    // 4. CRITICAL ANTI-GRAIN FIX:
-    // Flush blank black buffer to GDDRAM before enabling the display
+    // 4. Turn display ON and allow charge pump to reach ~7.5V
+    ssd1306_WriteCommand(0xAF); // Display ON
+    HAL_Delay(50);
+
+    // 5. Cleanly clear display buffer
     ssd1306_Clear(0);
     ssd1306_UpdateScreen();
 
-    // 5. Finally turn display ON
-    ssd1306_WriteCommand(0xAF); // Display ON
     return true;
 }
 
@@ -571,6 +571,18 @@ void SystemClock_Config(void) {
 static void MX_I2C1_Init(void) {
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
+
+    // Force peripheral reset to clear any hung state / BUSY erratum
+    __HAL_RCC_I2C1_FORCE_RESET();
+    for (volatile int i = 0; i < 500; i++);
+    __HAL_RCC_I2C1_RELEASE_RESET();
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
     hi2c1.Instance = I2C1;
     hi2c1.Init.ClockSpeed = 100000; // 100 kHz standard mode

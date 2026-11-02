@@ -499,9 +499,16 @@ static void MX_I2C1_Init(void) {
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
 
+    // 1. Force peripheral reset to clear any stuck silicon BUSY state
+    __HAL_RCC_I2C1_FORCE_RESET();
+    for (volatile int i = 0; i < 500; i++);
+    __HAL_RCC_I2C1_RELEASE_RESET();
+
+    // 2. Configure PB6 (SCL) and PB7 (SDA) as Open Drain with Pull-Up
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
@@ -520,7 +527,16 @@ static void MX_I2C1_Init(void) {
 }
 
 void Error_Handler(void) {
-    __disable_irq();
+    // Diagnostic visual panic blink on Pill 1 LED (PB1) instead of silent freeze
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_1;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
     while (1) {
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+        for (volatile int i = 0; i < 200000; i++);
     }
 }

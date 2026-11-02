@@ -114,7 +114,10 @@ static const uint8_t font5x7[95][5] = {
 
 static void ssd1306_WriteCommand(uint8_t cmd) {
     if (pOledI2c == NULL) return;
-    HAL_I2C_Mem_Write(pOledI2c, activeOledAddr, 0x00, 1, &cmd, 1, 100);
+    if (HAL_I2C_Mem_Write(pOledI2c, activeOledAddr, 0x00, 1, &cmd, 1, 50) != HAL_OK) {
+        pOledI2c->ErrorCode = HAL_I2C_ERROR_NONE;
+        pOledI2c->State = HAL_I2C_STATE_READY;
+    }
 }
 
 void ssd1306_Init(I2C_HandleTypeDef *hi2c) {
@@ -130,13 +133,7 @@ void ssd1306_Init(I2C_HandleTypeDef *hi2c) {
 
     ssd1306_WriteCommand(0xAE); // Display OFF
     ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
-    ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode
-    ssd1306_WriteCommand(0x21); // Set Column Address range
-    ssd1306_WriteCommand(0x00); // Start 0
-    ssd1306_WriteCommand(0x7F); // End 127
-    ssd1306_WriteCommand(0x22); // Set Page Address range
-    ssd1306_WriteCommand(0x00); // Start 0
-    ssd1306_WriteCommand(0x07); // End 7
+    ssd1306_WriteCommand(0x02); // 02b: Page Addressing Mode (strictly matches B0+page updates)
     ssd1306_WriteCommand(0xB0); // Page start address 0
     ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
     ssd1306_WriteCommand(0x00); // Low column address
@@ -160,13 +157,15 @@ void ssd1306_Init(I2C_HandleTypeDef *hi2c) {
     ssd1306_WriteCommand(0xDB); // Vcomh
     ssd1306_WriteCommand(0x40);
     ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump
+    ssd1306_WriteCommand(0x14); // Enable charge pump (generates ~7.5V panel boost)
 
-    // Clean initialization: clear buffer and flush GDDRAM before display ON
+    // Turn display ON first and give DC-DC charge pump time to stabilize
+    ssd1306_WriteCommand(0xAF); // Display ON
+    HAL_Delay(50);
+
+    // Clean initialization: clear buffer and flush zeros to GDDRAM
     ssd1306_Clear(0);
     ssd1306_UpdateScreen();
-
-    ssd1306_WriteCommand(0xAF); // Display ON
 }
 
 void ssd1306_Clear(uint8_t color) {
@@ -176,10 +175,15 @@ void ssd1306_Clear(uint8_t color) {
 void ssd1306_UpdateScreen(void) {
     if (pOledI2c == NULL) return;
     for (uint8_t page = 0; page < 8; page++) {
+        // In Page Addressing Mode (0x02), these three commands explicitly force
+        // hardware pointer alignment to (page, col 0), preventing any noise creep!
         ssd1306_WriteCommand(0xB0 + page);
         ssd1306_WriteCommand(0x00);
         ssd1306_WriteCommand(0x10);
-        HAL_I2C_Mem_Write(pOledI2c, activeOledAddr, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100);
+        if (HAL_I2C_Mem_Write(pOledI2c, activeOledAddr, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100) != HAL_OK) {
+            pOledI2c->ErrorCode = HAL_I2C_ERROR_NONE;
+            pOledI2c->State = HAL_I2C_STATE_READY;
+        }
     }
 }
 
