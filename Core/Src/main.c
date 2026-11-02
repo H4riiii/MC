@@ -631,6 +631,30 @@ int main(void) {
     MX_GPIO_Init();
     MX_I2C1_Init();
 
+    // Startup confirmation chime: LED 1 -> LED 2 -> Both + Ascending double beep
+#if ENABLE_LEDS || ENABLE_BUZZER
+    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+    HAL_Delay(60);
+    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+    HAL_Delay(70);
+
+    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+    HAL_Delay(60);
+    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+    HAL_Delay(70);
+
+    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN | LED_2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+    HAL_Delay(120);
+    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN | LED_2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+    HAL_Delay(100);
+#endif
+
     // 3. Initialize SSD1306 OLED Display
     ssd1306_Init();
 
