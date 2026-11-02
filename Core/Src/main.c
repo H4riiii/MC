@@ -1,6 +1,6 @@
 /*
  * ==============================================================================
- * SMART PILL BOX - STM32 C FIRMWARE (HAL & SSD1306 PURE C DRIVER + DS1307 RTC)
+ * SMART PILL BOX - STM32 C FIRMWARE (ZERO-SRAM DIRECT I2C STREAMING)
  * Target: STM32F103C8T6 (Blue Pill)
  *
  * PINOUT CONFIGURATION:
@@ -8,11 +8,11 @@
  * Shared I2C1 Bus (100 kHz):
  *   - OLED SCL      -> PB6 (I2C1 SCL)
  *   - OLED SDA      -> PB7 (I2C1 SDA)
- *   - OLED VCC      -> 3.3V
+ *   - OLED VCC      -> 3.3V / 5V
  *   - OLED GND      -> GND
  *   - DS1307 SCL    -> PB6 (I2C1 SCL - Shared with OLED)
  *   - DS1307 SDA    -> PB7 (I2C1 SDA - Shared with OLED)
- *   - DS1307 VCC    -> 5V (or 3.3V depending on module board)
+ *   - DS1307 VCC    -> 5V
  *   - DS1307 GND    -> GND
  *
  * User Push Buttons (Active LOW with internal pull-ups):
@@ -79,6 +79,7 @@
 #define NORMAL_BLINK_INTERVAL  500
 #define FAST_BLINK_INTERVAL    150
 #define FIELD_BLINK_INTERVAL   400
+#define RTC_UPDATE_INTERVAL    100   // 100 ms live loop interval
 
 /* ==============================================================================
  * SYSTEM STATES & DATA STRUCTURES
@@ -104,7 +105,8 @@ typedef struct {
 
 // Global System Variables
 static SystemState_t currentState = NORMAL_IDLE;
-static bool updateScreen = true;
+static SystemState_t lastRenderedState = (SystemState_t)-1;
+static bool forceFullRedraw = true;
 
 // Scheduled dose alarms: Dose 1 at 07:30, Dose 2 at 19:00
 static DoseAlarm_t dose1 = {7, 30, -1};
@@ -114,7 +116,7 @@ static DoseAlarm_t dose2 = {19, 0, -1};
 static DailyDoseLog_t doseHistory[3];
 static int viewLogDay = 0; // 0 = Today, 1 = Yesterday, 2 = Day Before
 
-// Setup temporary variables (1 = Pill 1, 2 = Pill 2, 3 = Clock Adjust, 4 = View Logs)
+// Setup temporary variables
 static int setupMenuItem = 1;
 static int tempHour = 0;
 static int tempMinute = 0;
@@ -164,11 +166,12 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 void Error_Handler(void);
 
-/* ==============================================================================
- * EMBEDDED SSD1306 PURE C OLED DRIVER & FONT
- * ============================================================================== */
-static uint8_t SSD1306_Buffer[SCREEN_WIDTH * SCREEN_HEIGHT / 8];
+static void updateAlarmIndicators(bool state, bool isPill1, bool isFastBlink);
+static void stopAlarmIndicators(void);
 
+/* ==============================================================================
+ * 5x7 ASCII FONT TABLE (Stored directly in Flash ROM, zero RAM usage)
+ * ============================================================================== */
 static const uint8_t font5x7[95][5] = {
     {0x00, 0x00, 0x00, 0x00, 0x00}, // 32 ' '
     {0x00, 0x00, 0x5F, 0x00, 0x00}, // 33 '!'
@@ -176,28 +179,28 @@ static const uint8_t font5x7[95][5] = {
     {0x14, 0x7F, 0x14, 0x7F, 0x14}, // 35 '#'
     {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // 36 '$'
     {0x23, 0x13, 0x08, 0x64, 0x62}, // 37 '%'
-    {0x36, 0x49, 0x56, 0x20, 0x50}, // 38 '&'
-    {0x00, 0x08, 0x07, 0x03, 0x00}, // 39 "'"
+    {0x36, 0x49, 0x55, 0x22, 0x50}, // 38 '&'
+    {0x00, 0x05, 0x03, 0x00, 0x00}, // 39 '\''
     {0x00, 0x1C, 0x22, 0x41, 0x00}, // 40 '('
     {0x00, 0x41, 0x22, 0x1C, 0x00}, // 41 ')'
-    {0x2A, 0x1C, 0x7F, 0x1C, 0x2A}, // 42 '*'
+    {0x08, 0x2A, 0x1C, 0x2A, 0x08}, // 42 '*'
     {0x08, 0x08, 0x3E, 0x08, 0x08}, // 43 '+'
-    {0x00, 0x80, 0x70, 0x30, 0x00}, // 44 ','
+    {0x00, 0x50, 0x30, 0x00, 0x00}, // 44 ','
     {0x08, 0x08, 0x08, 0x08, 0x08}, // 45 '-'
-    {0x00, 0x00, 0x60, 0x60, 0x00}, // 46 '.'
+    {0x00, 0x60, 0x60, 0x00, 0x00}, // 46 '.'
     {0x20, 0x10, 0x08, 0x04, 0x02}, // 47 '/'
     {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 48 '0'
     {0x00, 0x42, 0x7F, 0x40, 0x00}, // 49 '1'
-    {0x72, 0x49, 0x49, 0x49, 0x46}, // 50 '2'
-    {0x21, 0x41, 0x49, 0x4D, 0x33}, // 51 '3'
+    {0x42, 0x61, 0x51, 0x49, 0x46}, // 50 '2'
+    {0x21, 0x41, 0x45, 0x4B, 0x31}, // 51 '3'
     {0x18, 0x14, 0x12, 0x7F, 0x10}, // 52 '4'
     {0x27, 0x45, 0x45, 0x45, 0x39}, // 53 '5'
-    {0x3C, 0x4A, 0x49, 0x49, 0x31}, // 54 '6'
-    {0x41, 0x21, 0x11, 0x09, 0x07}, // 55 '7'
+    {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 54 '6'
+    {0x01, 0x71, 0x09, 0x05, 0x03}, // 55 '7'
     {0x36, 0x49, 0x49, 0x49, 0x36}, // 56 '8'
-    {0x46, 0x49, 0x49, 0x29, 0x1E}, // 57 '9'
-    {0x00, 0x00, 0x14, 0x00, 0x00}, // 58 ':'
-    {0x00, 0x40, 0x34, 0x00, 0x00}, // 59 ';'
+    {0x06, 0x49, 0x49, 0x29, 0x1E}, // 57 '9'
+    {0x00, 0x36, 0x36, 0x00, 0x00}, // 58 ':'
+    {0x00, 0x56, 0x36, 0x00, 0x00}, // 59 ';'
     {0x00, 0x08, 0x14, 0x22, 0x41}, // 60 '<'
     {0x14, 0x14, 0x14, 0x14, 0x14}, // 61 '='
     {0x00, 0x41, 0x22, 0x14, 0x08}, // 62 '>'
@@ -230,7 +233,7 @@ static const uint8_t font5x7[95][5] = {
     {0x03, 0x04, 0x78, 0x04, 0x03}, // 89 'Y'
     {0x61, 0x59, 0x49, 0x4D, 0x43}, // 90 'Z'
     {0x00, 0x7F, 0x41, 0x41, 0x41}, // 91 '['
-    {0x02, 0x04, 0x08, 0x10, 0x20}, // 92 '\'
+    {0x02, 0x04, 0x08, 0x10, 0x20}, // 92 '\\'
     {0x00, 0x41, 0x41, 0x41, 0x7F}, // 93 ']'
     {0x04, 0x02, 0x01, 0x02, 0x04}, // 94 '^'
     {0x40, 0x40, 0x40, 0x40, 0x40}, // 95 '_'
@@ -267,342 +270,319 @@ static const uint8_t font5x7[95][5] = {
     {0x02, 0x01, 0x02, 0x04, 0x02}, // 126 '~'
 };
 
+/* ==============================================================================
+ * SSD1306 HARDWARE DRIVER (Page Addressing Mode, Direct I2C Streaming)
+ *
+ * Architecture: Zero-SRAM direct-stream. Every render function positions the
+ * SSD1306 page/column pointer then writes pixel data in a single 128-byte
+ * burst per page row. No intermediate framebuffer is kept in STM32 SRAM.
+ *
+ * Key design decisions:
+ *  - Page Addressing Mode (0x02) used throughout — matches 0xB0+page pointer
+ *    set commands in every DirectStream function.
+ *  - Each page write is ONE 128-byte HAL_I2C_Mem_Write call (not 4×32-byte).
+ *    This eliminates inter-burst I2C STOP/START overhead and keeps the total
+ *    bus time per page to ~11ms at 100 kHz, well within any timeout.
+ *  - ssd1306_WriteCommand timeout: 10 ms  (single byte, should complete ~0.1ms)
+ *  - ssd1306_WritePage    timeout: 20 ms  (128 bytes  ~11ms at 100kHz)
+ *  - I2C guard: every low-level function checks hi2c1.State and re-inits if
+ *    BUSY/ERROR so a single timeout never permanently kills the display.
+ * ============================================================================== */
+
+/* -- Internal helper: recover I2C if HAL left it in a bad state ------------- */
+static void ssd1306_I2C_Guard(void) {
+    if (hi2c1.State != HAL_I2C_STATE_READY) {
+        HAL_I2C_DeInit(&hi2c1);
+        MX_I2C1_Init();
+    }
+}
+
+/* -- Send one command byte to SSD1306 --------------------------------------- */
 static void ssd1306_WriteCommand(uint8_t cmd) {
-    HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x00, 1, &cmd, 1, 100);
+    ssd1306_I2C_Guard();
+    HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x00, 1, &cmd, 1, 10);
 }
 
-void ssd1306_Clear(uint8_t color);
-void ssd1306_UpdateScreen(void);
-
-void ssd1306_Init(void) {
-    HAL_Delay(100);
-    ssd1306_WriteCommand(0xAE); // Display OFF (remain off during init to hide uninitialized GDDRAM)
-    ssd1306_WriteCommand(0x20); // Set Memory Addressing Mode
-    ssd1306_WriteCommand(0x00); // 00b: Horizontal Addressing Mode
-    ssd1306_WriteCommand(0xB0); // Page start address 0
-    ssd1306_WriteCommand(0xC8); // COM Output Scan Direction (remapped)
-    ssd1306_WriteCommand(0x00); // Low column address 0
-    ssd1306_WriteCommand(0x10); // High column address 0
-    ssd1306_WriteCommand(0x40); // Start line address 0
-    ssd1306_WriteCommand(0x81); // Set contrast control
-    ssd1306_WriteCommand(0x7F);
-    ssd1306_WriteCommand(0xA1); // Set segment re-map (A0/A1)
-    ssd1306_WriteCommand(0xA6); // Normal display
-    ssd1306_WriteCommand(0xA8); // Multiplex ratio
-    ssd1306_WriteCommand(0x3F); // 1/64 duty
-    ssd1306_WriteCommand(0xA4); // Output RAM to display
-    ssd1306_WriteCommand(0xD3); // Display offset
-    ssd1306_WriteCommand(0x00);
-    ssd1306_WriteCommand(0xD5); // Display clock divide ratio/oscillator
-    ssd1306_WriteCommand(0x80);
-    ssd1306_WriteCommand(0xD9); // Pre-charge period
-    ssd1306_WriteCommand(0xF1);
-    ssd1306_WriteCommand(0xDA); // COM pins hardware configuration
-    ssd1306_WriteCommand(0x12);
-    ssd1306_WriteCommand(0xDB); // Vcomh
-    ssd1306_WriteCommand(0x40);
-    ssd1306_WriteCommand(0x8D); // Charge pump regulator
-    ssd1306_WriteCommand(0x14); // Enable charge pump (~7.5V OLED booster)
-
-    // Clear STM32 buffer and flush 1024 zero bytes to OLED GDDRAM *before* turning display ON
-    // This permanently clears power-on static noise!
-    ssd1306_Clear(0);
-    ssd1306_UpdateScreen();
-
-    ssd1306_WriteCommand(0xAF); // Display ON
-    HAL_Delay(20);
+/* -- Write 128 pixel-bytes to the current page position --------------------- */
+static void ssd1306_WritePage(uint8_t page, const uint8_t *data, uint16_t len) {
+    /* Position GDDRAM pointer: page row + column 0 */
+    ssd1306_WriteCommand(0xB0 + page); /* Page start address          */
+    ssd1306_WriteCommand(0x00);        /* Lower column nibble  = 0    */
+    ssd1306_WriteCommand(0x10);        /* Higher column nibble = 0    */
+    ssd1306_I2C_Guard();
+    HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x40, 1, (uint8_t *)data, len, 20);
 }
 
-void ssd1306_Clear(uint8_t color) {
-    memset(SSD1306_Buffer, color ? 0xFF : 0x00, sizeof(SSD1306_Buffer));
+/* -- Clear one page (128 zero-bytes) ---------------------------------------- */
+static void ssd1306_ClearPage(uint8_t page) {
+    static const uint8_t zeros[128] = {0};
+    ssd1306_WritePage(page, zeros, 128);
 }
 
-void ssd1306_UpdateScreen(void) {
-    // In Horizontal Addressing Mode (0x00):
-    // Set column range from 0 to 127
-    ssd1306_WriteCommand(0x21);
-    ssd1306_WriteCommand(0x00);
-    ssd1306_WriteCommand(127);
-
-    // Set page range from 0 to 7 (8 pages = 64 lines)
-    ssd1306_WriteCommand(0x22);
-    ssd1306_WriteCommand(0x00);
-    ssd1306_WriteCommand(0x07);
-
-    // Send 1024 bytes in clean 128-byte pages
+/* -- Clear all 8 pages of OLED GDDRAM --------------------------------------- */
+static void ssd1306_ClearScreen(void) {
     for (uint8_t page = 0; page < 8; page++) {
-        HAL_I2C_Mem_Write(&hi2c1, SSD1306_I2C_ADDR, 0x40, 1, &SSD1306_Buffer[128 * page], 128, 100);
+        ssd1306_ClearPage(page);
     }
 }
 
-void ssd1306_DrawPixel(int x, int y, uint8_t color) {
-    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
-    if (color == 1) {
-        SSD1306_Buffer[x + (y / 8) * SCREEN_WIDTH] |= (1 << (y % 8));
-    } else if (color == 0) {
-        SSD1306_Buffer[x + (y / 8) * SCREEN_WIDTH] &= ~(1 << (y % 8));
-    } else {
-        SSD1306_Buffer[x + (y / 8) * SCREEN_WIDTH] ^= (1 << (y % 8));
-    }
-}
+/* ---------------------------------------------------------------------------
+ * ssd1306_DirectStreamString()
+ *
+ * Renders a string of 5×7 font characters directly into OLED GDDRAM starting
+ * at (page, col). Characters are 6 pixels wide (5 glyph + 1 gap column).
+ * Builds the full page row in a local 128-byte array then flushes it in one
+ * burst — avoids per-character I2C transactions that used to add ~0.8 ms each.
+ * --------------------------------------------------------------------------- */
+static void ssd1306_DirectStreamString(uint8_t page, uint8_t col, const char *str, bool invert) {
+    uint8_t rowBuf[128];
+    /* Pre-fill with background: 0x00 (normal) or 0xFF (inverted) */
+    memset(rowBuf, invert ? 0xFF : 0x00, sizeof(rowBuf));
 
-void ssd1306_DrawLine(int x0, int y0, int x1, int y1, uint8_t color) {
-    int dx = (x1 >= x0) ? (x1 - x0) : (x0 - x1);
-    int dy = (y1 >= y0) ? (y1 - y0) : (y0 - y1);
-    int sx = (x0 < x1) ? 1 : -1;
-    int sy = (y0 < y1) ? 1 : -1;
-    int err = dx - dy;
-
-    while (1) {
-        ssd1306_DrawPixel(x0, y0, color);
-        if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 > -dy) {
-            err -= dy;
-            x0 += sx;
+    uint8_t x = col;
+    while (*str && x < 128) {
+        char c = *str++;
+        const uint8_t *glyph = (c >= 32 && c <= 126) ? font5x7[c - 32] : font5x7[0];
+        for (int i = 0; i < 5 && x < 128; i++, x++) {
+            rowBuf[x] = invert ? ~glyph[i] : glyph[i];
         }
-        if (e2 < dx) {
-            err += dx;
-            y0 += sy;
+        if (x < 128) {
+            rowBuf[x++] = invert ? 0xFF : 0x00; /* 1-pixel character gap */
         }
     }
+    ssd1306_WritePage(page, rowBuf, 128);
 }
 
-void ssd1306_DrawRect(int x, int y, int w, int h, uint8_t color) {
-    ssd1306_DrawLine(x, y, x + w - 1, y, color);
-    ssd1306_DrawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
-    ssd1306_DrawLine(x, y, x, y + h - 1, color);
-    ssd1306_DrawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
+/* -- Draw a solid horizontal pixel-line across page 'page' ------------------ */
+static void ssd1306_DirectStreamHLine(uint8_t page, uint8_t pattern) {
+    uint8_t lineBuf[128];
+    memset(lineBuf, pattern, sizeof(lineBuf));
+    ssd1306_WritePage(page, lineBuf, 128);
 }
 
-void ssd1306_FillRect(int x, int y, int w, int h, uint8_t color) {
-    for (int i = x; i < x + w; i++) {
-        for (int j = y; j < y + h; j++) {
-            ssd1306_DrawPixel(i, j, color);
-        }
-    }
-}
+/* ---------------------------------------------------------------------------
+ * ssd1306_Init()  — SSD1306 power-on initialisation sequence
+ *
+ * Uses Page Addressing Mode (0x02).  GDDRAM is cleared to zero before the
+ * display is turned ON so no random static noise is visible on power-up.
+ * --------------------------------------------------------------------------- */
+void ssd1306_Init(void) {
+    HAL_Delay(100); /* Let OLED VCC stabilise */
 
-void ssd1306_DrawChar(int x, int y, char c, uint8_t size, uint8_t color, uint8_t bg) {
-    if (c < 32 || c > 126) c = 32;
-    uint8_t charIdx = c - 32;
+    ssd1306_WriteCommand(0xAE); /* Display OFF                              */
+    ssd1306_WriteCommand(0x20); /* Set Memory Addressing Mode               */
+    ssd1306_WriteCommand(0x02); /* Page Addressing Mode                     */
+    ssd1306_WriteCommand(0xB0); /* Page start address = page 0              */
+    ssd1306_WriteCommand(0xC8); /* COM scan direction: remapped             */
+    ssd1306_WriteCommand(0x00); /* Low column nibble  = 0                   */
+    ssd1306_WriteCommand(0x10); /* High column nibble = 0                   */
+    ssd1306_WriteCommand(0x40); /* Display start line = 0                   */
+    ssd1306_WriteCommand(0x81); /* Set contrast                             */
+    ssd1306_WriteCommand(0x7F);
+    ssd1306_WriteCommand(0xA1); /* Segment re-map: col 127 → SEG0          */
+    ssd1306_WriteCommand(0xA6); /* Normal (non-inverted) display            */
+    ssd1306_WriteCommand(0xA8); /* Multiplex ratio                          */
+    ssd1306_WriteCommand(0x3F); /* 1/64 duty (64 rows)                      */
+    ssd1306_WriteCommand(0xA4); /* Output follows GDDRAM                    */
+    ssd1306_WriteCommand(0xD3); /* Display offset                           */
+    ssd1306_WriteCommand(0x00); /* No offset                                */
+    ssd1306_WriteCommand(0xD5); /* Clock divide ratio / oscillator freq     */
+    ssd1306_WriteCommand(0x80);
+    ssd1306_WriteCommand(0xD9); /* Pre-charge period                        */
+    ssd1306_WriteCommand(0xF1);
+    ssd1306_WriteCommand(0xDA); /* COM pins hardware config                 */
+    ssd1306_WriteCommand(0x12);
+    ssd1306_WriteCommand(0xDB); /* VCOMH deselect level                     */
+    ssd1306_WriteCommand(0x40);
+    ssd1306_WriteCommand(0x8D); /* Charge pump                              */
+    ssd1306_WriteCommand(0x14); /* Enable charge pump (~7.5 V booster)      */
 
-    for (int col = 0; col < 6; col++) {
-        uint8_t line = (col < 5) ? font5x7[charIdx][col] : 0x00;
-        for (int row = 0; row < 8; row++) {
-            uint8_t pixelOn = (line & (1 << row)) ? color : bg;
-            if (pixelOn != 2) { // 2 = transparent
-                if (size == 1) {
-                    ssd1306_DrawPixel(x + col, y + row, pixelOn);
-                } else {
-                    for (int si = 0; si < size; si++) {
-                        for (int sj = 0; sj < size; sj++) {
-                            ssd1306_DrawPixel(x + col * size + si, y + row * size + sj, pixelOn);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+    /* Write all-zeros to every page BEFORE display ON — prevents static grain */
+    ssd1306_ClearScreen();
 
-void ssd1306_DrawString(int x, int y, const char *str, uint8_t size, uint8_t color, uint8_t bg) {
-    while (*str) {
-        ssd1306_DrawChar(x, y, *str, size, color, bg);
-        x += 6 * size;
-        str++;
-    }
+    ssd1306_WriteCommand(0xAF); /* Display ON                               */
+    HAL_Delay(50);              /* Wait for display to light up             */
 }
 
 /* ==============================================================================
- * OLED UI RENDERING
+ * ZERO-SRAM UI RENDERING ROUTINES
+ * Directly updates OLED pages without allocating any SRAM framebuffer.
  * ============================================================================== */
 
-static void printHeader(void) {
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", currentRtc.hours, currentRtc.minutes, currentRtc.seconds);
-    ssd1306_DrawString(38, 2, buf, 1, 1, 0);
-    // Draw indicator if RTC is actively responding
-    if (!rtcAvailable) {
-        ssd1306_DrawString(2, 2, "!", 1, 1, 0); // Warning icon if RTC read failed
-    }
-    if (sdAvailable) {
-        ssd1306_DrawString(110, 2, "SD", 1, 1, 0);
-    }
-    ssd1306_DrawLine(0, 12, 127, 12, 1);
+static void renderLiveClockHeader(void) {
+    char headerBuf[32];
+    // Page 0: [HH:MM:SS] RTC:[OK/!] SD:[OK/-]
+    snprintf(headerBuf, sizeof(headerBuf), " %02d:%02d:%02d  %s %s ", 
+             currentRtc.hours, currentRtc.minutes, currentRtc.seconds,
+             rtcAvailable ? "RTC:OK" : "RTC:!",
+             sdAvailable ? "SD:OK" : "SD:-");
+    ssd1306_DirectStreamString(0, 4, headerBuf, false);
+    ssd1306_DirectStreamHLine(1, 0x01); // 1-pixel bottom line divider on Page 1
 }
 
-static void renderScreen(void) {
-    ssd1306_Clear(0);
+static void renderZeroSramScreen(void) {
+    char lineBuf[48];
+
+    /* On state change: clear only the body pages (2-7). Pages 0-1 (header) are
+     * always fully rewritten by renderLiveClockHeader() or the state case below,
+     * so clearing them first just wastes I2C bandwidth. Body pages must be wiped
+     * so stale text from the previous state doesn't bleed through. */
+    if (currentState != lastRenderedState || forceFullRedraw) {
+        for (uint8_t p = 2; p < 8; p++) {
+            ssd1306_ClearPage(p);
+        }
+        lastRenderedState = currentState;
+        forceFullRedraw = false;
+    }
 
     switch (currentState) {
         case NORMAL_IDLE: {
-            printHeader();
-            char buf[16];
-            ssd1306_DrawString(4, 18, "P1: ", 1, 1, 0);
-            snprintf(buf, sizeof(buf), "%02d:%02d", dose1.hour, dose1.minute);
-            ssd1306_DrawString(28, 18, buf, 1, 1, 0);
+            renderLiveClockHeader();
 
-            ssd1306_DrawString(68, 18, "P2: ", 1, 1, 0);
-            snprintf(buf, sizeof(buf), "%02d:%02d", dose2.hour, dose2.minute);
-            ssd1306_DrawString(92, 18, buf, 1, 1, 0);
+            // Page 2: Pill 1 Alarm Schedule & Status
+            snprintf(lineBuf, sizeof(lineBuf), "P1 [%02d:%02d]: %s",
+                     dose1.hour, dose1.minute,
+                     (doseHistory[0].p1_status == DOSE_STATUS_TAKEN) ? "TAKEN" :
+                     (doseHistory[0].p1_status == DOSE_STATUS_MISSED) ? "MISSED" : "PENDING");
+            ssd1306_DirectStreamString(2, 4, lineBuf, false);
 
-            ssd1306_DrawLine(0, 30, 127, 30, 1);
-            ssd1306_DrawString(12, 36, "READY & MONITORING", 1, 1, 0);
-            ssd1306_DrawString(10, 52, "Press [B3] for Setup", 1, 1, 0);
+            // Page 3: Pill 2 Alarm Schedule & Status
+            snprintf(lineBuf, sizeof(lineBuf), "P2 [%02d:%02d]: %s",
+                     dose2.hour, dose2.minute,
+                     (doseHistory[0].p2_status == DOSE_STATUS_TAKEN) ? "TAKEN" :
+                     (doseHistory[0].p2_status == DOSE_STATUS_MISSED) ? "MISSED" : "PENDING");
+            ssd1306_DirectStreamString(3, 4, lineBuf, false);
+
+            ssd1306_DirectStreamHLine(5, 0x01);
+
+            // Page 6: System status
+            ssd1306_DirectStreamString(6, 8, "MONITORING ACTIVE", false);
+
+            // Page 7: Button helper prompt
+            ssd1306_DirectStreamString(7, 4, "[B3: Settings / Logs]", false);
             break;
         }
 
         case REMINDER_DOSE_1:
         case REMINDER_DOSE_2: {
-            printHeader();
             bool isDose1 = (currentState == REMINDER_DOSE_1);
+            renderLiveClockHeader();
 
             if (wrongButtonPressed) {
-                ssd1306_FillRect(0, 16, 128, 48, alarmVisualState ? 1 : 0);
-                uint8_t fg = alarmVisualState ? 0 : 1;
-                uint8_t bg = alarmVisualState ? 1 : 0;
-
-                ssd1306_DrawString(10, 20, "WRONG PILL!", 2, fg, bg);
-                ssd1306_DrawString(10, 40, isDose1 ? "Press BUTTON 1" : "Press BUTTON 2", 1, fg, bg);
-                ssd1306_DrawString(10, 52, isDose1 ? "for PILL 1" : "for PILL 2", 1, fg, bg);
+                ssd1306_DirectStreamString(2, 8, "!! WRONG PILL !!", alarmVisualState);
+                snprintf(lineBuf, sizeof(lineBuf), "Press BUTTON %d for P%d", isDose1 ? 1 : 2, isDose1 ? 1 : 2);
+                ssd1306_DirectStreamString(4, 4, lineBuf, false);
+                ssd1306_DirectStreamString(6, 4, "DO NOT TAKE WRONG DOSE", false);
             } else {
-                if (alarmVisualState) {
-                    ssd1306_FillRect(0, 15, 128, 18, 1);
-                    ssd1306_DrawString(12, 17, "MEDICINE!", 2, 0, 1);
-                } else {
-                    ssd1306_DrawString(12, 17, "MEDICINE!", 2, 1, 0);
-                }
-                ssd1306_DrawString(8, 38, isDose1 ? "TAKE: >> PILL 1 <<" : "TAKE: >> PILL 2 <<", 1, 1, 0);
-                ssd1306_DrawString(8, 52, isDose1 ? "Press Button 1 to OK" : "Press Button 2 to OK", 1, 1, 0);
+                ssd1306_DirectStreamString(2, 16, isDose1 ? "TAKE >> PILL 1 <<" : "TAKE >> PILL 2 <<", alarmVisualState);
+                snprintf(lineBuf, sizeof(lineBuf), "Time: %02d:%02d", isDose1 ? dose1.hour : dose2.hour, isDose1 ? dose1.minute : dose2.minute);
+                ssd1306_DirectStreamString(4, 28, lineBuf, false);
+                snprintf(lineBuf, sizeof(lineBuf), "Press Button %d to Confirm", isDose1 ? 1 : 2);
+                ssd1306_DirectStreamString(6, 4, lineBuf, false);
             }
             break;
         }
 
         case DOSE_CONFIRMED: {
-            ssd1306_FillRect(2, 4, 124, 56, 0);
-            ssd1306_DrawRect(0, 2, 128, 60, 1);
-            ssd1306_DrawString(6, 14, "DOSE TAKEN", 2, 1, 0);
-            ssd1306_DrawString(14, 40, "Recorded! Good job.", 1, 1, 0);
+            ssd1306_DirectStreamString(2, 24, "DOSE CONFIRMED", true);
+            ssd1306_DirectStreamString(4, 16, "RECORDED TO SD CARD", false);
+            ssd1306_DirectStreamString(6, 28, "Good Job! Stay Safe.", false);
             break;
         }
 
         case SETUP_MENU: {
-            ssd1306_DrawString(34, 2, "SETTINGS", 1, 1, 0);
-            ssd1306_DrawLine(0, 11, 127, 11, 1);
+            ssd1306_DirectStreamString(0, 36, "SETTINGS MENU", false);
+            ssd1306_DirectStreamHLine(1, 0x01);
 
-            ssd1306_DrawString(8, 14, (setupMenuItem == 1) ? "> 1. PILL 1 TIME" : "  1. PILL 1 TIME", 1, 1, 0);
-            ssd1306_DrawString(8, 24, (setupMenuItem == 2) ? "> 2. PILL 2 TIME" : "  2. PILL 2 TIME", 1, 1, 0);
-            ssd1306_DrawString(8, 34, (setupMenuItem == 3) ? "> 3. ADJUST CLOCK" : "  3. ADJUST CLOCK", 1, 1, 0);
-            ssd1306_DrawString(8, 44, (setupMenuItem == 4) ? "> 4. VIEW LOGS"    : "  4. VIEW LOGS",    1, 1, 0);
+            ssd1306_DirectStreamString(2, 4, (setupMenuItem == 1) ? "> 1. PILL 1 TIME   " : "  1. PILL 1 TIME   ", (setupMenuItem == 1));
+            ssd1306_DirectStreamString(3, 4, (setupMenuItem == 2) ? "> 2. PILL 2 TIME   " : "  2. PILL 2 TIME   ", (setupMenuItem == 2));
+            ssd1306_DirectStreamString(4, 4, (setupMenuItem == 3) ? "> 3. ADJUST CLOCK  " : "  3. ADJUST CLOCK  ", (setupMenuItem == 3));
+            ssd1306_DirectStreamString(5, 4, (setupMenuItem == 4) ? "> 4. VIEW LOGS     " : "  4. VIEW LOGS     ", (setupMenuItem == 4));
 
-            ssd1306_DrawLine(0, 54, 127, 54, 1);
-            ssd1306_DrawString(2, 56, "B1:Next B2:Select B3:Exit", 1, 1, 0);
+            ssd1306_DirectStreamHLine(6, 0x80);
+            ssd1306_DirectStreamString(7, 2, "B1:Next B2:Select B3:Exit", false);
             break;
         }
 
         case SETUP_EDIT_HOUR:
         case SETUP_EDIT_MINUTE: {
-            if (setupMenuItem == 1) {
-                ssd1306_DrawString(24, 2, "PILL 1 TIME", 1, 1, 0);
-            } else if (setupMenuItem == 2) {
-                ssd1306_DrawString(24, 2, "PILL 2 TIME", 1, 1, 0);
-            } else {
-                ssd1306_DrawString(24, 2, "ADJUST CLOCK", 1, 1, 0);
-            }
-            ssd1306_DrawLine(0, 12, 127, 12, 1);
-
-            char buf[8];
             bool isEditHour = (currentState == SETUP_EDIT_HOUR);
+            const char *title = (setupMenuItem == 1) ? "SET PILL 1 TIME" :
+                                (setupMenuItem == 2) ? "SET PILL 2 TIME" : "ADJUST CLOCK";
+            ssd1306_DirectStreamString(0, 16, title, false);
+            ssd1306_DirectStreamHLine(1, 0x01);
 
             if (isEditHour && !cursorVisible) {
-                ssd1306_DrawString(30, 24, "  ", 2, 1, 0);
+                snprintf(lineBuf, sizeof(lineBuf), "    -- : %02d    ", tempMinute);
+            } else if (!isEditHour && !cursorVisible) {
+                snprintf(lineBuf, sizeof(lineBuf), "    %02d : --    ", tempHour);
             } else {
-                snprintf(buf, sizeof(buf), "%02d", tempHour);
-                ssd1306_DrawString(30, 24, buf, 2, 1, 0);
+                snprintf(lineBuf, sizeof(lineBuf), "    %02d : %02d    ", tempHour, tempMinute);
             }
+            ssd1306_DirectStreamString(3, 16, lineBuf, true);
 
-            ssd1306_DrawString(56, 24, ":", 2, 1, 0);
-
-            if (!isEditHour && !cursorVisible) {
-                ssd1306_DrawString(70, 24, "  ", 2, 1, 0);
-            } else {
-                snprintf(buf, sizeof(buf), "%02d", tempMinute);
-                ssd1306_DrawString(70, 24, buf, 2, 1, 0);
-            }
-
-            ssd1306_DrawString(isEditHour ? 35 : 75, 42, "^^", 1, 1, 0);
-            ssd1306_DrawLine(0, 52, 127, 52, 1);
-            ssd1306_DrawString(2, 55, isEditHour ? "B1:+Hour B2:Next" : "B1:+Min  B2:Save", 1, 1, 0);
+            ssd1306_DirectStreamString(5, 20, isEditHour ? "^^ [HOUR]" : "      ^^ [MIN]", false);
+            ssd1306_DirectStreamHLine(6, 0x80);
+            ssd1306_DirectStreamString(7, 2, isEditHour ? "B1:+Hour B2:Next B3:Back" : "B1:+Min  B2:Save B3:Back", false);
             break;
         }
 
         case SETUP_CONFIRM: {
-            ssd1306_DrawString(32, 2, "SAVE TIME?", 1, 1, 0);
-            ssd1306_DrawLine(0, 12, 127, 12, 1);
+            ssd1306_DirectStreamString(0, 32, "CONFIRM SAVE?", false);
+            ssd1306_DirectStreamHLine(1, 0x01);
 
-            ssd1306_DrawString(30, 24, confirmSaveChoice ? "> YES, SAVE" : "  YES, SAVE", 1, 1, 0);
-            ssd1306_DrawString(30, 38, !confirmSaveChoice ? "> CANCEL" : "  CANCEL", 1, 1, 0);
+            ssd1306_DirectStreamString(3, 20, confirmSaveChoice ? "> YES, SAVE   " : "  YES, SAVE   ", confirmSaveChoice);
+            ssd1306_DirectStreamString(4, 20, !confirmSaveChoice ? "> CANCEL      " : "  CANCEL      ", !confirmSaveChoice);
 
-            ssd1306_DrawLine(0, 52, 127, 52, 1);
-            ssd1306_DrawString(2, 55, "B1:Toggle  B2:Confirm", 1, 1, 0);
+            ssd1306_DirectStreamHLine(6, 0x80);
+            ssd1306_DirectStreamString(7, 4, "B1:Toggle  B2:Confirm", false);
             break;
         }
 
         case SETUP_FEEDBACK: {
-            if (setupMenuItem == 1) {
-                ssd1306_DrawString(16, 12, "PILL 1", 2, 1, 0);
-            } else if (setupMenuItem == 2) {
-                ssd1306_DrawString(16, 12, "PILL 2", 2, 1, 0);
-            } else {
-                ssd1306_DrawString(16, 12, "RTC CLOCK", 2, 1, 0);
-            }
-            ssd1306_DrawString(20, 38, confirmSaveChoice ? "TIME SAVED!" : "DISCARDED", 1, 1, 0);
+            const char *item = (setupMenuItem == 1) ? "PILL 1 TIME" :
+                               (setupMenuItem == 2) ? "PILL 2 TIME" : "RTC CLOCK";
+            ssd1306_DirectStreamString(2, 24, item, false);
+            ssd1306_DirectStreamString(4, 20, confirmSaveChoice ? "SAVED TO SD & RTC" : "CHANGES CANCELLED", true);
             break;
         }
 
         case VIEW_LOGS: {
-            char buf[48];
-            const char *tag = (viewLogDay == 0) ? "TODAY" : ((viewLogDay == 1) ? "-1 DAY" : "-2 DAYS");
-            snprintf(buf, sizeof(buf), "LOG [%d/3] %02d/%02d (%s)", 
+            const char *tag = (viewLogDay == 0) ? "TODAY" : ((viewLogDay == 1) ? "YESTERDAY" : "-2 DAYS");
+            snprintf(lineBuf, sizeof(lineBuf), "LOG [%d/3] %02d/%02d (%s)", 
                      viewLogDay + 1, doseHistory[viewLogDay].day, doseHistory[viewLogDay].month, tag);
-            ssd1306_DrawString(2, 2, buf, 1, 1, 0);
-            ssd1306_DrawLine(0, 12, 127, 12, 1);
+            ssd1306_DirectStreamString(0, 2, lineBuf, false);
+            ssd1306_DirectStreamHLine(1, 0x01);
 
-            // Pill 1 Line
+            // Pill 1 Log Entry
             if (doseHistory[viewLogDay].p1_status == DOSE_STATUS_TAKEN) {
-                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: OK %02d:%02d", 
-                         dose1.hour, dose1.minute, doseHistory[viewLogDay].p1_hour, doseHistory[viewLogDay].p1_min);
+                snprintf(lineBuf, sizeof(lineBuf), "P1: OK at %02d:%02d", doseHistory[viewLogDay].p1_hour, doseHistory[viewLogDay].p1_min);
             } else if (doseHistory[viewLogDay].p1_status == DOSE_STATUS_MISSED) {
-                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: MISSED", dose1.hour, dose1.minute);
+                snprintf(lineBuf, sizeof(lineBuf), "P1: MISSED (%02d:%02d)", dose1.hour, dose1.minute);
             } else {
-                snprintf(buf, sizeof(buf), "P1[%02d:%02d]: PENDING", dose1.hour, dose1.minute);
+                snprintf(lineBuf, sizeof(lineBuf), "P1: PENDING (%02d:%02d)", dose1.hour, dose1.minute);
             }
-            ssd1306_DrawString(2, 16, buf, 1, 1, 0);
+            ssd1306_DirectStreamString(2, 4, lineBuf, false);
 
-            // Pill 2 Line
+            // Pill 2 Log Entry
             if (doseHistory[viewLogDay].p2_status == DOSE_STATUS_TAKEN) {
-                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: OK %02d:%02d", 
-                         dose2.hour, dose2.minute, doseHistory[viewLogDay].p2_hour, doseHistory[viewLogDay].p2_min);
+                snprintf(lineBuf, sizeof(lineBuf), "P2: OK at %02d:%02d", doseHistory[viewLogDay].p2_hour, doseHistory[viewLogDay].p2_min);
             } else if (doseHistory[viewLogDay].p2_status == DOSE_STATUS_MISSED) {
-                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: MISSED", dose2.hour, dose2.minute);
+                snprintf(lineBuf, sizeof(lineBuf), "P2: MISSED (%02d:%02d)", dose2.hour, dose2.minute);
             } else {
-                snprintf(buf, sizeof(buf), "P2[%02d:%02d]: PENDING", dose2.hour, dose2.minute);
+                snprintf(lineBuf, sizeof(lineBuf), "P2: PENDING (%02d:%02d)", dose2.hour, dose2.minute);
             }
-            ssd1306_DrawString(2, 28, buf, 1, 1, 0);
+            ssd1306_DirectStreamString(3, 4, lineBuf, false);
 
-            // SD storage sector line
-            ssd1306_DrawLine(0, 40, 127, 40, 1);
-            ssd1306_DrawString(2, 43, sdAvailable ? "SD: SAVED [SEC 1001]" : "SD: NOT DETECTED", 1, 1, 0);
+            // SD sector verification
+            snprintf(lineBuf, sizeof(lineBuf), "SD: %s", sdAvailable ? "SECTOR 1001 SYNCED" : "NO SD CARD");
+            ssd1306_DirectStreamString(5, 4, lineBuf, false);
 
-            // Navigation footer
-            ssd1306_DrawLine(0, 53, 127, 53, 1);
-            ssd1306_DrawString(2, 55, "B1:Next Day   B3:Back", 1, 1, 0);
+            ssd1306_DirectStreamHLine(6, 0x80);
+            ssd1306_DirectStreamString(7, 4, "B1:Next Day   B3:Back", false);
             break;
         }
     }
-
-    ssd1306_UpdateScreen();
 }
 
 /* ==============================================================================
@@ -650,7 +630,7 @@ int main(void) {
     MX_GPIO_Init();
     MX_I2C1_Init();
 
-    // 3. Initialize SSD1306 OLED Display
+    // 3. Initialize SSD1306 OLED Display (Zero-SRAM Direct Stream Mode)
     ssd1306_Init();
 
     // 4. Initialize DS1307 Real Time Clock
@@ -673,76 +653,31 @@ int main(void) {
         }
     }
 
-    // 5. I2C Bus Scan & Hardware Diagnostic LED Indicators
-    uint8_t foundDevices[8] = {0};
-    uint8_t foundCount = 0;
-    bool oledDetected = false;
-    bool rtcDetected = false;
+    // 6. Direct I2C Splash Diagnostic Screen
+    ssd1306_ClearScreen();
+    ssd1306_DirectStreamString(1, 16, "SMART PILL BOX", false);
+    ssd1306_DirectStreamHLine(2, 0x01);
+    ssd1306_DirectStreamString(3, 4, rtcAvailable ? "RTC DS1307: READY" : "RTC DS1307: FAILED", false);
+    ssd1306_DirectStreamString(4, 4, sdAvailable ?  "SD LOGGING: READY" : "SD LOGGING: NONE", false);
+    ssd1306_DirectStreamString(6, 4, "MODE: ZERO-SRAM I2C", false);
+    HAL_Delay(1800);
 
-    for (uint16_t addr = 1; addr < 128; addr++) {
-        if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 10) == HAL_OK) {
-            if (foundCount < 8) {
-                foundDevices[foundCount++] = (uint8_t)addr;
-            }
-            if (addr == 0x3C || addr == 0x3D) {
-                oledDetected = true;
-            }
-            if (addr == 0x68) {
-                rtcDetected = true;
-            }
-        }
-    }
-
-    // Hardware LED Diagnostic:
-    // - If OLED OK (0x3C)  -> Turn ON LED 1 (PB1)
-    // - If RTC OK (0x68)   -> Turn ON LED 2 (PB10)
-    // - If Both OK         -> Both LEDs ON
-#if ENABLE_LEDS
-    HAL_GPIO_WritePin(LED_PORT, LED_1_PIN, oledDetected ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(LED_PORT, LED_2_PIN, rtcDetected ? GPIO_PIN_SET : GPIO_PIN_RESET);
-#endif
-
-    ssd1306_Clear(0);
-    ssd1306_DrawString(8, 4, "I2C BUS SCAN:", 1, 1, 0);
-
-    char scanMsg[32];
-    if (foundCount == 0) {
-        ssd1306_DrawString(8, 20, "NO DEVICES FOUND", 1, 1, 0);
-    } else {
-        int xOffset = 8;
-        int yOffset = 20;
-        for (uint8_t i = 0; i < foundCount; i++) {
-            snprintf(scanMsg, sizeof(scanMsg), "0x%02X ", foundDevices[i]);
-            ssd1306_DrawString(xOffset, yOffset, scanMsg, 1, 1, 0);
-            xOffset += 32;
-            if (xOffset > 100) {
-                xOffset = 8;
-                yOffset += 12;
-            }
-        }
-    }
-
-    ssd1306_DrawString(8, 44, rtcAvailable ? "RTC: OK" : "RTC: NONE", 1, 1, 0);
-    ssd1306_DrawString(70, 44, sdAvailable ? "SD: OK" : "SD: NONE", 1, 1, 0);
-    ssd1306_UpdateScreen();
-    HAL_Delay(2500);
-
-    // Initialize 3-Day Dosage History tracking
+    // 7. Initialize 3-Day Dosage History tracking
     DoseHistory_Init(doseHistory, currentRtc.year, currentRtc.month, currentRtc.date,
                      dose1.hour, dose1.minute, dose2.hour, dose2.minute, currentRtc.hours, currentRtc.minutes);
 
     currentState = NORMAL_IDLE;
-    updateScreen = true;
+    forceFullRedraw = true;
     lastRtcRead = HAL_GetTick();
 
     /* ==========================================================================
-     * APPLICATION SUPER-LOOP
+     * APPLICATION SUPER-LOOP (100 ms Cycle)
      * ========================================================================== */
     while (1) {
         uint32_t now = HAL_GetTick();
 
-        // 1. Read real time from DS1307 RTC (every 500 ms)
-        if (now - lastRtcRead >= 500) {
+        // 1. Read real time from DS1307 RTC (every 100 ms)
+        if (now - lastRtcRead >= RTC_UPDATE_INTERVAL) {
             uint32_t elapsedMs = now - lastRtcRead;
             lastRtcRead = now;
             RTC_DateTime_t tempRtc;
@@ -756,8 +691,7 @@ int main(void) {
                     lastSecChangeTime = now;
                     currentRtc = tempRtc;
                 } else if (now - lastSecChangeTime >= 1500) {
-                    // Physical 32.768 kHz oscillator stalled: kick-start and tick forward
-                    DS1307_Init(&hi2c1);
+                    // Physical 32.768 kHz oscillator stalled: tick forward fallback
                     currentRtc.seconds++;
                     if (currentRtc.seconds >= 60) {
                         currentRtc.seconds = 0;
@@ -791,11 +725,11 @@ int main(void) {
                     }
                 }
             }
+
             DoseHistory_CheckDayChange(doseHistory, currentRtc.year, currentRtc.month, currentRtc.date,
                                        dose1.hour, dose1.minute, dose2.hour, dose2.minute);
             DoseHistory_UpdateStatus(doseHistory, dose1.hour, dose1.minute, dose2.hour, dose2.minute,
                                      currentRtc.hours, currentRtc.minutes);
-            updateScreen = true;
         }
 
         // 2. Read Active LOW buttons with edge-detection debounce
@@ -811,7 +745,6 @@ int main(void) {
             if (now - lastButton1Press > DEBOUNCE_TIME) {
                 lastButton1Press = now;
                 btn1Pressed = true;
-                updateScreen = true;
             }
         }
 
@@ -819,7 +752,6 @@ int main(void) {
             if (now - lastButton2Press > DEBOUNCE_TIME) {
                 lastButton2Press = now;
                 btn2Pressed = true;
-                updateScreen = true;
             }
         }
 
@@ -827,7 +759,6 @@ int main(void) {
             if (now - lastButton3Press > DEBOUNCE_TIME) {
                 lastButton3Press = now;
                 btn3Pressed = true;
-                updateScreen = true;
             }
         }
 
@@ -840,7 +771,6 @@ int main(void) {
             if (now - lastBlinkToggle >= FIELD_BLINK_INTERVAL) {
                 lastBlinkToggle = now;
                 cursorVisible = !cursorVisible;
-                updateScreen = true;
             }
         }
 
@@ -850,7 +780,7 @@ int main(void) {
                 if (btn3Pressed) {
                     currentState = SETUP_MENU;
                     setupMenuItem = 1;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
 
                 // Check Pill 1 Alarm Trigger against Real RTC Time
@@ -860,7 +790,7 @@ int main(void) {
                     wrongButtonPressed = false;
                     currentBlinkInterval = NORMAL_BLINK_INTERVAL;
                     currentState = REMINDER_DOSE_1;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
 
                 // Check Pill 2 Alarm Trigger against Real RTC Time
@@ -870,7 +800,7 @@ int main(void) {
                     wrongButtonPressed = false;
                     currentBlinkInterval = NORMAL_BLINK_INTERVAL;
                     currentState = REMINDER_DOSE_2;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
 
@@ -879,7 +809,6 @@ int main(void) {
                     lastAlarmToggle = now;
                     alarmVisualState = !alarmVisualState;
                     updateAlarmIndicators(alarmVisualState, true, wrongButtonPressed);
-                    updateScreen = true;
                 }
 
                 // Button 1 is CORRECT for Pill 1
@@ -887,10 +816,10 @@ int main(void) {
                     stopAlarmIndicators();
                     doseConfirmedTimer = now;
                     currentState = DOSE_CONFIRMED;
+                    forceFullRedraw = true;
                     DoseHistory_RecordDose(doseHistory, 1, currentRtc.hours, currentRtc.minutes);
                     SD_LogEvent(SD_EVENT_DOSE_1_TAKEN, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Confirmed Button 1");
-                    updateScreen = true;
                 }
                 // Button 2 is WRONG for Pill 1
                 else if (btn2Pressed && !wrongButtonPressed) {
@@ -898,7 +827,6 @@ int main(void) {
                     currentBlinkInterval = FAST_BLINK_INTERVAL;
                     SD_LogEvent(SD_EVENT_WRONG_BUTTON, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Pill 1 due - Pressed Btn 2");
-                    updateScreen = true;
                 }
                 break;
 
@@ -907,7 +835,6 @@ int main(void) {
                     lastAlarmToggle = now;
                     alarmVisualState = !alarmVisualState;
                     updateAlarmIndicators(alarmVisualState, false, wrongButtonPressed);
-                    updateScreen = true;
                 }
 
                 // Button 2 is CORRECT for Pill 2
@@ -915,10 +842,10 @@ int main(void) {
                     stopAlarmIndicators();
                     doseConfirmedTimer = now;
                     currentState = DOSE_CONFIRMED;
+                    forceFullRedraw = true;
                     DoseHistory_RecordDose(doseHistory, 2, currentRtc.hours, currentRtc.minutes);
                     SD_LogEvent(SD_EVENT_DOSE_2_TAKEN, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Confirmed Button 2");
-                    updateScreen = true;
                 }
                 // Button 1 is WRONG for Pill 2
                 else if (btn1Pressed && !wrongButtonPressed) {
@@ -926,25 +853,21 @@ int main(void) {
                     currentBlinkInterval = FAST_BLINK_INTERVAL;
                     SD_LogEvent(SD_EVENT_WRONG_BUTTON, currentRtc.year, currentRtc.month, currentRtc.date,
                                 currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "Pill 2 due - Pressed Btn 1");
-                    updateScreen = true;
                 }
                 break;
 
             case DOSE_CONFIRMED:
                 if (now - doseConfirmedTimer >= 2000) {
                     currentState = NORMAL_IDLE;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case SETUP_MENU:
-                // Button 1 cycles through: 1. Pill 1 -> 2. Pill 2 -> 3. Adjust Clock -> 4. View Logs
                 if (btn1Pressed) {
                     setupMenuItem++;
                     if (setupMenuItem > 4) setupMenuItem = 1;
-                    updateScreen = true;
                 }
-                // Button 2 selects current item
                 if (btn2Pressed) {
                     if (setupMenuItem == 1) {
                         tempHour   = dose1.hour;
@@ -954,50 +877,53 @@ int main(void) {
                         tempHour   = dose2.hour;
                         tempMinute = dose2.minute;
                         currentState = SETUP_EDIT_HOUR;
-                    } else if (setupMenuItem == 3) { // 3: RTC Clock Adjust
+                    } else if (setupMenuItem == 3) {
                         tempHour   = currentRtc.hours;
                         tempMinute = currentRtc.minutes;
                         currentState = SETUP_EDIT_HOUR;
-                    } else { // 4: View Logs
+                    } else {
                         currentState = VIEW_LOGS;
                         viewLogDay = 0;
                     }
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
-                // Button 3 exits setup menu back to normal idle
                 if (btn3Pressed) {
                     currentState = NORMAL_IDLE;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case SETUP_EDIT_HOUR:
                 if (btn1Pressed) {
                     tempHour = (tempHour + 1) % 24;
-                    updateScreen = true;
                 }
                 if (btn2Pressed) {
                     currentState = SETUP_EDIT_MINUTE;
-                    updateScreen = true;
+                }
+                if (btn3Pressed) {
+                    currentState = SETUP_MENU;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case SETUP_EDIT_MINUTE:
                 if (btn1Pressed) {
                     tempMinute = (tempMinute + 1) % 60;
-                    updateScreen = true;
                 }
                 if (btn2Pressed) {
                     confirmSaveChoice = true;
                     currentState = SETUP_CONFIRM;
-                    updateScreen = true;
+                    forceFullRedraw = true;
+                }
+                if (btn3Pressed) {
+                    currentState = SETUP_MENU;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case SETUP_CONFIRM:
                 if (btn1Pressed) {
                     confirmSaveChoice = !confirmSaveChoice;
-                    updateScreen = true;
                 }
                 if (btn2Pressed) {
                     if (confirmSaveChoice) {
@@ -1019,7 +945,7 @@ int main(void) {
                             // Write updated time to DS1307 RTC
                             currentRtc.hours = tempHour;
                             currentRtc.minutes = tempMinute;
-                            currentRtc.seconds = 0; // Reset seconds on time adjust
+                            currentRtc.seconds = 0;
                             DS1307_SetTime(&hi2c1, &currentRtc);
                             SD_LogEvent(SD_EVENT_CLOCK_ADJUSTED, currentRtc.year, currentRtc.month, currentRtc.date,
                                         currentRtc.hours, currentRtc.minutes, currentRtc.seconds, "RTC clock re-calibrated");
@@ -1027,36 +953,36 @@ int main(void) {
                     }
                     feedbackTimer = now;
                     currentState = SETUP_FEEDBACK;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case SETUP_FEEDBACK:
                 if (now - feedbackTimer >= 1500) {
                     currentState = NORMAL_IDLE;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
 
             case VIEW_LOGS:
                 if (btn1Pressed) {
                     viewLogDay = (viewLogDay + 1) % 3;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 if (btn3Pressed) {
                     currentState = SETUP_MENU;
-                    updateScreen = true;
+                    forceFullRedraw = true;
                 }
                 break;
         }
 
-        // 5. Redraw OLED screen when needed
-        if (updateScreen) {
-            renderScreen();
-            updateScreen = false;
-        }
+        // 5. Update OLED directly via I2C stream
+        renderZeroSramScreen();
 
-        HAL_Delay(10);
+        /* No HAL_Delay here — the I2C streaming in renderZeroSramScreen() already
+         * provides natural pacing (~88ms per full 8-page render at 100 kHz).
+         * Adding a HAL_Delay on top risks overrunning the RTC_UPDATE_INTERVAL
+         * and causes the HAL I2C state machine to perceive overlapping transactions. */
     }
 }
 
