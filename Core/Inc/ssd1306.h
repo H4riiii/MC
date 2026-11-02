@@ -25,8 +25,13 @@ extern "C" {
 
 /* Core Driver Functions */
 void ssd1306_Init(I2C_HandleTypeDef *hi2c);
-void ssd1306_Clear(uint8_t color);
-void ssd1306_UpdateScreen(void);
+void ssd1306_Clear(uint8_t color);   // fills the current 128-byte page only (no frame buffer)
+void ssd1306_BeginPage(uint8_t page); // start rendering page 0..7 (clears it)
+void ssd1306_EndPage(void);           // stream the rendered page to the OLED
+
+/* A frame is drawn by running the same drawing code once per page:
+ *   for (p = 0; p < 8; p++) { ssd1306_BeginPage(p); <draw everything>; ssd1306_EndPage(); }
+ * Drawing calls only affect the page being rendered. */
 
 /* Graphics Primitives */
 void ssd1306_DrawPixel(int x, int y, uint8_t color);

@@ -508,19 +508,7 @@ static void MX_I2C1_Init(void) {
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
 
-    // 1. Force peripheral reset to clear any stuck silicon BUSY state
-    __HAL_RCC_I2C1_FORCE_RESET();
-    for (volatile int i = 0; i < 500; i++);
-    __HAL_RCC_I2C1_RELEASE_RESET();
-
-    // 2. Configure PB6 (SCL) and PB7 (SDA) as Open Drain with Pull-Up
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
+    // Pins PB6/PB7 are configured by HAL_I2C_MspInit (stm32f1xx_hal_msp.c), as in a335f8b
     hi2c1.Instance = I2C1;
     hi2c1.Init.ClockSpeed = 100000;
     hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;

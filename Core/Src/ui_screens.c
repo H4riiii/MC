@@ -25,7 +25,7 @@ static void printHeader(const UI_Context_t *ctx) {
     ssd1306_DrawLine(0, 12, 127, 12, 1);
 }
 
-void UI_RenderScreen(const UI_Context_t *ctx) {
+static void renderBody(const UI_Context_t *ctx) {
     ssd1306_Clear(0);
 
     switch (ctx->state) {
@@ -198,10 +198,17 @@ void UI_RenderScreen(const UI_Context_t *ctx) {
         }
     }
 
-    ssd1306_UpdateScreen();
 }
 
-void UI_DrawI2CScanSplash(const uint8_t *foundDevices, uint8_t foundCount, bool rtcOk, bool sdOk) {
+void UI_RenderScreen(const UI_Context_t *ctx) {
+    for (uint8_t page = 0; page < 8; page++) {
+        ssd1306_BeginPage(page);
+        renderBody(ctx);
+        ssd1306_EndPage();
+    }
+}
+
+static void splashBody(const uint8_t *foundDevices, uint8_t foundCount, bool rtcOk, bool sdOk) {
     ssd1306_Clear(0);
     ssd1306_DrawString(8, 4, "I2C BUS SCAN:", 1, 1, 0);
 
@@ -224,6 +231,13 @@ void UI_DrawI2CScanSplash(const uint8_t *foundDevices, uint8_t foundCount, bool 
 
     ssd1306_DrawString(8, 44, rtcOk ? "RTC: OK" : "RTC: NONE", 1, 1, 0);
     ssd1306_DrawString(70, 44, sdOk ? "SD: OK" : "SD: NONE", 1, 1, 0);
-    ssd1306_UpdateScreen();
+}
+
+void UI_DrawI2CScanSplash(const uint8_t *foundDevices, uint8_t foundCount, bool rtcOk, bool sdOk) {
+    for (uint8_t page = 0; page < 8; page++) {
+        ssd1306_BeginPage(page);
+        splashBody(foundDevices, foundCount, rtcOk, sdOk);
+        ssd1306_EndPage();
+    }
 }
 
